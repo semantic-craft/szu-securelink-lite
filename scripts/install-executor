@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""Stage and install the tunnel executor daemon (administrator authorization).
+
+The root script verifies staged digests before copying, marks the daemon
+immutable, registers a launchd socket listener at
+/var/run/local.szu.securelink.executor, and bootstraps the job. Refuses when
+anything is already installed unless --replace. Prints the exact root command
+with --dry-run.
+"""
+import argparse
+import datetime
+import json
+import os
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
+import helper_install  # noqa: E402  (shared osascript admin runner)
+
+OUT = ROOT / "out" / "executor-install"
+BUILD = ROOT / "out" / "executor-build"
+PLIST_DEST = "/Library/LaunchDaemons/" + helper_install.LABEL + "-executor.plist"
+DAEMON_DEST = "/Library/PrivilegedHelperTools/" + helper_install.LABEL + "-executor"
+CONTEXT_DEST = "/Library/PrivilegedHelperTools/" + helper_install.LABEL + "-executor-context.json"
+STATIC_DEST = "/Library/PrivilegedHelperTools/" + helper_install.LABEL + "-executor-static-routes.json"
+CDHASH_DEST = "/Library/PrivilegedHelperTools/" + helper_install.LABEL + "-executor-engine.cdhash"
+IDENTITY_DEST = "/Library/PrivilegedHelperTools/" + helper_install.LABEL + "-executor-identity"
+SOCKET_PATH = "/var/run/" + helper_install.LABEL + "-executor"
+
+
+def plist_bytes(allowed_uid: int) -> bytes:
+    import plistlib
+    job = {
+        "Label": helper_install.LABEL + "-executor",
+        "ProgramArguments": [
+            DAEMON_DEST,
+            "--allowed-uid", str(allowed_uid),
+            "--context-file", CONTEXT_DEST,
+            "--static-routes-file", STATIC_DEST,
+            "--engine-cdhash-file", CDHASH_DEST,
+            "--identity-file", IDENTITY_DEST,
+        ],
+        "Sockets": {"Listeners": {
+            "SockPathName": SOCKET_PATH, "SockPathMode": 0o666, "SockType": "STREAM"}},
+        "RunAtLoad": False, "KeepAlive": False,
+        "StandardErrorPath": "/var/log/szu-executor.log",
+        "StandardOutPath": "/var/log/szu-executor.log",
+    }
+    return plistlib.dumps(job, fmt=plistlib.FMT_XML)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--replace", action="store_true")
+    args = parser.parse_args()
+
+    subprocess.run([str(ROOT / "scripts/build-executor")], check=True, timeout=400)
+    build = json.loads((BUILD / "receipt.json").read_text())
+    uid = os.getuid()
+
+    staged = [
+        (Path(build["daemon"]["path"]), build["daemon"]["sha256"]),
+        (None, build["daemon"]["sha256"]),  # placeholder for plist digest below
+        (Path(build["context"]["path"]), build["context"]["sha256"]),
+        (Path(build["staticRoutes"]["path"]), build["staticRoutes"]["sha256"]),
+        (Path(BUILD / "engine-cdhash.txt"),
+         __import__("hashlib").sha256((BUILD / "engine-cdhash.txt").read_bytes()).hexdigest()),
+        (Path(BUILD / "lease-identity.txt"),
+         __import__("hashlib").sha256((BUILD / "lease-identity.txt").read_bytes()).hexdigest()),
+    ]
+    plist = plist_bytes(uid)
+    plist_staged = BUILD / "executor-launchd.plist"
+    plist_staged.write_bytes(plist)
+    import hashlib
+    staged[1] = (plist_staged, hashlib.sha256(plist_staged.read_bytes()).hexdigest())
+
+    script = build_root_script(staged)
+
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    if args.dry_run:
+        print(json.dumps({"daemon": build["daemon"], "engine": build["engine"],
+                          "socket": SOCKET_PATH, "allowedUid": uid}, indent=2))
+        print("--- root script ---")
+        print(script, end="")
+        return 0
+
+    for target in (DAEMON_DEST, PLIST_DEST):
+        if Path(target).exists() and not args.replace:
+            raise SystemExit(f"{target} exists; run with --replace or uninstall first")
+
+    helper_install.osascript_admin(script)
+    OUT.mkdir(parents=True, exist_ok=True)
+    receipt = OUT / f"install-{stamp}.json"
+    receipt.write_text(json.dumps({
+        "label": helper_install.LABEL + "-executor",
+        "daemonPath": DAEMON_DEST, "plistPath": PLIST_DEST, "socketPath": SOCKET_PATH,
+        "daemonSha256": build["daemon"]["sha256"], "daemonCdhash": build["daemon"]["cdhash"],
+        "engineCdhash": build["engine"]["cdhash"], "allowedUid": uid,
+        "installedAt": stamp, "replaced": bool(args.replace),
+    }, indent=2, sort_keys=True) + "\n")
+    print(json.dumps({"installed": True, "receipt": str(receipt),
+                      "daemonSha256": build["daemon"]["sha256"]}, sort_keys=True))
+    return 0
+
+
+def build_root_script(staged):
+    q = shlex.quote
+    lines = ["set -eu", "umask 077",
+             f"/bin/mkdir -p {q(str(Path(DAEMON_DEST).parent))}"]
+    destinations = (DAEMON_DEST, PLIST_DEST, CONTEXT_DEST, STATIC_DEST, CDHASH_DEST, IDENTITY_DEST)
+    pairs = [(source, digest, dest) for (source, digest), dest in zip(staged, destinations)]
+    for source, digest, _dest in pairs:
+        lines.append(f"actual=$(/usr/bin/shasum -a 256 {q(str(source))})")
+        lines.append(f'[ "${{actual%% *}}" = {digest} ] || exit 65')
+    for _source, _digest, dest in pairs:
+        if Path(dest).exists():
+            lines.append(f"/usr/bin/chflags nouchg {q(dest)} || true")
+    for source, digest, dest in pairs:
+        lines.append(f"/bin/cp -f {q(str(source))} {q(dest)}")
+    lines.append("/usr/sbin/chown root:wheel " + " ".join(q(dest) for _, _, dest in pairs))
+    lines.append(f"/bin/chmod 0755 {q(DAEMON_DEST)}")
+    lines.append("/bin/chmod 0644 " + " ".join(q(dest) for _, _, dest in pairs[1:]))
+    for _source, digest, dest in pairs:
+        lines.append(f"actual=$(/usr/bin/shasum -a 256 {q(dest)})")
+        lines.append(f'[ "${{actual%% *}}" = {digest} ] || exit 65')
+    lines.append(f"/usr/bin/chflags uchg {q(DAEMON_DEST)} {q(CONTEXT_DEST)} {q(STATIC_DEST)} "
+                 f"{q(CDHASH_DEST)} {q(IDENTITY_DEST)}")
+    label = helper_install.LABEL + "-executor"
+    lines.append(f"/bin/launchctl bootout system/{q(label)} >/dev/null 2>&1 || true")
+    lines.append(f"/bin/launchctl bootstrap system {q(PLIST_DEST)}")
+    lines.append(f"/bin/launchctl print system/{q(label)} >/dev/null")
+    return "\n".join(lines) + "\n"
+
+
+if __name__ == "__main__":
+    sys.exit(main())

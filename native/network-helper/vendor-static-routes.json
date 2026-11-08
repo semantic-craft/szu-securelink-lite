@@ -1,0 +1,781 @@
+{
+  "source": "observed official client local route policy (utun7, out/vendor-static-routes/official-utun7-20261105.json)",
+  "policy": "split tunnel: school-internal ranges ride the SecureLink tunnel; the default route stays with the system gateway",
+  "routes": [
+    {
+      "address": "1.1.96.1",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "10.10.27.0",
+      "prefixLength": 24,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "10.10.27.3",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "116.13.96.149",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.20.20.21",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.21.4.16",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.21.4.17",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.21.5.221",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.21.8.10",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.21.9.234",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.21.40.5",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.21.52.8",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.21.53.11",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.21.62.1",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.21.62.3",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.21.234.103",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.21.234.110",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.21.246.70",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.25.75.128",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.25.75.220",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.25.81.201",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.25.81.222",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.25.93.21",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.25.93.22",
+      "prefixLength": 31,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.25.93.24",
+      "prefixLength": 29,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.25.93.32",
+      "prefixLength": 28,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.25.93.48",
+      "prefixLength": 30,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.25.93.52",
+      "prefixLength": 31,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.25.93.54",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.25.164.34",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.25.164.176",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.25.190.10",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.0.0",
+      "prefixLength": 16,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.0.249",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.1.13",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.2.21",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.3.10",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.3.25",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.3.72",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.3.96",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.3.144",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.50.1",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.50.2",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.50.9",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.50.11",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.50.17",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.50.247",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.51.66",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.51.96",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.51.97",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.51.123",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.61.29",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.64.10",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.73.248",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.81.248",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.105.23",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.111.234",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.121.246",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.131.51",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.131.67",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.131.131",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.131.147",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.131.157",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.131.195",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.131.197",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.131.210",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.132.9",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.132.30",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.132.38",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.132.56",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.132.59",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.132.60",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.134.8",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.134.12",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.134.22",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.134.31",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.134.41",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.134.53",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.134.66",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.134.67",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.134.69",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.134.99",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.134.106",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.134.122",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.134.126",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.134.141",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.134.142",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.134.207",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.134.221",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.152.112",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.155.39",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.171.241",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.171.244",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.221.51",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.221.52",
+      "prefixLength": 30,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.221.56",
+      "prefixLength": 29,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.221.64",
+      "prefixLength": 26,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.221.128",
+      "prefixLength": 30,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.221.132",
+      "prefixLength": 31,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.226.31",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.230.240",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.233.14",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.233.173",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.234.146",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "172.31.236.164",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "192.168.52.47",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "192.168.52.103",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "192.168.74.39",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "192.168.74.88",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "192.168.76.211",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "192.168.98.12",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "192.168.100.65",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "192.168.136.247",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "192.168.144.125",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "192.168.144.200",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "192.168.150.244",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "192.168.219.222",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "192.168.219.251",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "192.168.240.0",
+      "prefixLength": 20,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "192.168.247.6",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "210.39.0.0",
+      "prefixLength": 16,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "210.39.0.33",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "210.39.3.155",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "210.39.4.1",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "210.39.4.72",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "210.39.4.81",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "210.39.5.32",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "210.39.7.43",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    },
+    {
+      "address": "210.39.12.35",
+      "prefixLength": 32,
+      "metric": -1,
+      "ipv6": false
+    }
+  ],
+  "count": 129
+}

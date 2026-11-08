@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""Uninstall the tunnel executor daemon (administrator authorization).
+
+Root bootstraps the job out, clears immutable flags, removes every staged
+file, and verifies the absence with launchctl. Refuses when nothing is
+installed. The official client and its configuration are untouched.
+"""
+import datetime
+import json
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
+import helper_install  # noqa: E402  (osascript admin runner, LABEL)
+
+LABEL = helper_install.LABEL + "-executor"
+TARGETS = [
+    "/Library/PrivilegedHelperTools/" + LABEL,
+    "/Library/PrivilegedHelperTools/" + LABEL + "-context.json",
+    "/Library/PrivilegedHelperTools/" + LABEL + "-static-routes.json",
+    "/Library/PrivilegedHelperTools/" + LABEL + "-engine.cdhash",
+    "/Library/PrivilegedHelperTools/" + LABEL + "-identity",
+    "/Library/LaunchDaemons/" + LABEL + ".plist",
+]
+
+
+def root_script() -> str:
+    lines = ["set -eu",
+             f"/bin/launchctl bootout system/{shlex.quote(LABEL)} >/dev/null 2>&1 || true"]
+    for target in TARGETS:
+        lines.append(f"if [ -e {shlex.quote(target)} ]; then "
+                     f"/usr/bin/chflags nouchg {shlex.quote(target)}; fi")
+    for target in TARGETS:
+        lines.append(f"/bin/rm -f {shlex.quote(target)}")
+    lines.append(f"if /bin/launchctl print system/{shlex.quote(LABEL)} >/dev/null 2>&1; then "
+                 "exit 66; fi")
+    for target in TARGETS:
+        lines.append(f"if [ -e {shlex.quote(target)} ]; then exit 67; fi")
+    return "\n".join(lines) + "\n"
+
+
+def main() -> int:
+    if not any(Path(target).exists() for target in TARGETS):
+        print("executor is not installed")
+        return 0
+    script = root_script()
+    run = subprocess.run([
+        "osascript", "-e", "on run argv",
+        "-e", "do shell script (item 1 of argv) with administrator privileges",
+        "-e", "end run", script,
+    ], capture_output=True, text=True, timeout=180)
+    if run.returncode != 0:
+        print("administrator authorization failed: " + run.stderr.strip()[-400:],
+              file=sys.stderr)
+        return 1
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    out_dir = ROOT / "out" / "executor-install"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    receipt = out_dir / f"uninstall-{stamp}.json"
+    receipt.write_text(json.dumps({
+        "label": LABEL, "uninstalledAt": stamp, "verifiedAbsent": True,
+    }, indent=2, sort_keys=True) + "\n")
+    print(json.dumps({"uninstalled": True, "receipt": str(receipt)}, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

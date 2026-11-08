@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""Build the stdin-only evaluator. Network fetch is explicit; no system installation."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+
+ROOT = Path(__file__).resolve().parent.parent
+OUT = ROOT / "out" / "openvpn3"
+
+
+def prepare_transport_overlay(source, overlay):
+    """Expose the existing upstream stream-mutation hook; preserve pinned sources."""
+    relative = Path("openvpn/transport/client/tcpcli.hpp")
+    original = (source / relative).read_bytes()
+    if hashlib.sha256(original).hexdigest() != "333f3ebf2bdb2555a03adbe2bef913b8c0b0de511f6bf00e572a156bb4f0b434":
+        raise ValueError("Unexpected TCP transport header; review overlay against the pinned revision")
+    text = original.decode()
+    edits = [("#include <sstream>", "#include <sstream>\n#include <functional>"),
+             ("    SessionStats::Ptr stats;", "    SessionStats::Ptr stats;\n    std::function<TransportMutateStream::Ptr()> make_mutator; // fresh state per connection"),
+             ("                impl->start();", "                auto *stream = dynamic_cast<LinkImpl::Base *>(impl.get());\n                if (!stream) throw std::runtime_error(\"unsupported stream adapter\");\n                if (config->make_mutator) stream->set_mutate(config->make_mutator());\n                impl->start();")]
+    for before, after in edits:
+        if text.count(before) != 1:
+            raise ValueError("Ambiguous TCP transport overlay")
+        text = text.replace(before, after)
+    destination = overlay / relative
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(text)
+    return {"baseSHA256": hashlib.sha256(original).hexdigest(),
+            "overlaySHA256": hashlib.sha256(text.encode()).hexdigest(), "edits": len(edits)}
+
+
+def prepare_domain_overlay(source, overlay):
+    """Capture one fixed vendor option before the helper-only builder loses it."""
+    relative = Path("openvpn/tun/client/tunprop.hpp")
+    original = (source / relative).read_bytes()
+    if hashlib.sha256(original).hexdigest() != "3f5617a2576980b7520665225819fa1ee26c6bb47a1626521738ec280285ffe1":
+        raise ValueError("Unexpected TunProp header; review against pinned revision")
+    text = original.decode()
+    before = "        // if eer_factory is defined, we must emulate exclude routes"
+    if text.count(before) != 1:
+        raise ValueError("Ambiguous domain capture overlay")
+    text = text.replace(before, """        if (auto *capture = dynamic_cast<SzuDomainOptionCapture *>(tb)) {
+            if (!capture->capture_domain_options(opt))
+                throw tun_prop_error("domain-policy-capture-rejected");
+        }
+""" + before)
+    text = '#include "szu_domain_capture.hpp"\n' + text
+    destination = overlay / relative
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(text)
+    interface = (ROOT / "native/openvpn3-handshake/domain_capture.hpp").read_bytes()
+    (destination.parent / "szu_domain_capture.hpp").write_bytes(interface)
+    return {"baseSHA256": hashlib.sha256(original).hexdigest(),
+            "overlaySHA256": hashlib.sha256(text.encode()).hexdigest(),
+            "interfaceSHA256": hashlib.sha256(interface).hexdigest()}
+
+
+
+def prepare_control_overlay(source, overlay):
+    """Explicit per-transport callback before the fixed control dispatch body."""
+    relative = Path("openvpn/client/cliproto.hpp")
+    original = (source / relative).read_bytes()
+    if hashlib.sha256(original).hexdigest() != "9d271b7243f021799087d5924189ae73043ddd324ed342b5822450ba496663d2":
+        raise ValueError("Unexpected control protocol header; review pinned dispatch")
+    text = original.decode()
+    edits = [
+        ("    void control_recv(BufferPtr &&app_bp) override\n    {\n        const std::string msg =",
+         "    void control_recv(BufferPtr &&app_bp) override\n    {\n        std::string msg ="),
+        ('        // OPENVPN_LOG("SERVER: " << sanitize_control_message(msg));',
+         '''        if (auto *capture = dynamic_cast<SzuControlCapture *>(transport_factory.get())) {
+            if (!capture->normalize_control(msg)) return;
+        }
+        // Raw control messages intentionally never logged.''')]
+    for before, after in edits:
+        if text.count(before) != 1:
+            raise ValueError("Ambiguous control protocol overlay")
+        text = text.replace(before, after)
+    text = '#include "szu_control_capture.hpp"\n' + text
+    destination = overlay / relative
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(text)
+    interface = (ROOT / "native/openvpn3-handshake/control_capture.hpp").read_text()
+    # Reference the single source header: copying a pragma-once parser would
+    # create a second physical definition when plan.hpp includes the original.
+    interface = interface.replace('#include "../ctrl-policy/receiver.hpp"',
+                                  '#include "' + str(ROOT / "native/ctrl-policy/receiver.hpp") + '"')
+    (destination.parent / "szu_control_capture.hpp").write_text(interface)
+    receipts = {}
+    for name in ("receiver.hpp", "parser.hpp"):
+        data = (ROOT / "native/ctrl-policy" / name).read_bytes()
+        receipts[name] = hashlib.sha256(data).hexdigest()
+    return {"baseSHA256": hashlib.sha256(original).hexdigest(),
+            "overlaySHA256": hashlib.sha256(text.encode()).hexdigest(),
+            "interfaceSHA256": hashlib.sha256(interface.encode()).hexdigest(),
+            "policyHeaders": receipts}
+
+def run(args, *, env=None, capture=False, timeout=180):
+    return subprocess.run(args, cwd=ROOT, env=env, check=True, timeout=timeout,
+                          text=True, stdout=subprocess.PIPE if capture else None).stdout
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--fetch", action="store_true", help="download missing pinned public source checkouts into out/")
+    args = parser.parse_args()
+    OUT.mkdir(parents=True, exist_ok=True)
+    manifest = json.loads((ROOT / "native/openvpn3-eval/dependencies.json").read_text())
+    for dependency in manifest.values():
+        directory = OUT / dependency["directory"]
+        if not directory.exists():
+            if not args.fetch:
+                raise SystemExit("Missing source dependencies; explicitly run scripts/build-openvpn3-eval --fetch")
+            env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
+            run(["git", "clone", "--depth", "1", "--branch", dependency["tag"], dependency["repository"], str(directory)], env=env)
+        actual = run(["git", "-C", str(directory), "rev-parse", "HEAD"], capture=True).strip()
+        if actual != dependency["commit"] or run(["git", "-C", str(directory), "status", "--porcelain"], capture=True).strip():
+            raise SystemExit("Source dependency is not the clean pinned revision; preserve and inspect it before building")
+    overlay_receipt = prepare_transport_overlay(OUT / "source", OUT / "transport-overlay")
+    domain_receipt = prepare_domain_overlay(OUT / "source", OUT / "transport-overlay")
+    control_receipt = prepare_control_overlay(OUT / "source", OUT / "transport-overlay")
+    env = dict(os.environ)
+    prefix = env.get("OPENSSL3_PREFIX")
+    if not prefix and shutil.which("brew"):
+        prefix = run(["brew", "--prefix", "openssl@3"], capture=True).strip()
+    if prefix:
+        env["PKG_CONFIG_PATH"] = str(Path(prefix) / "lib/pkgconfig") + os.pathsep + env.get("PKG_CONFIG_PATH", "")
+    openssl_version = run(["pkg-config", "--modversion", "openssl"], env=env, capture=True).strip()
+    if not openssl_version.startswith("3."):
+        raise SystemExit("OpenSSL 3 is required; select its existing prefix using OPENSSL3_PREFIX (no packages installed)")
+    lz4_version = run(["pkg-config", "--modversion", "liblz4"], env=env, capture=True).strip()
+    run(["cmake", "-S", str(ROOT / "native/openvpn3-eval"), "-B", str(OUT / "build"),
+         "-DOPENVPN3_SOURCE=" + str(OUT / "source"), "-DASIO_SOURCE=" + str(OUT / "asio"),
+         "-DOPENVPN3_OVERLAY=" + str(OUT / "transport-overlay"),
+         "-DCMAKE_BUILD_TYPE=Release"], env=env)
+    run(["cmake", "--build", str(OUT / "build"), "--parallel", "2"], env=env)
+    receipt = {"sourceDependencies": manifest, "transportOverlay": overlay_receipt, "domainCaptureOverlay": domain_receipt, "controlCaptureOverlay": control_receipt, "openssl": openssl_version, "lz4": lz4_version,
+               "executable": "out/openvpn3/build/szu-openvpn3-eval",
+               "handshakeExecutable": "out/openvpn3/build/szu-openvpn3-handshake" if (OUT / "build/szu-openvpn3-handshake").is_file() else None,
+               "networkEvaluationPerformed": False}
+    (OUT / "build-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    print("Built out/openvpn3/build/szu-openvpn3-eval; build metadata in out/openvpn3/build-receipt.json")
+
+
+if __name__ == "__main__":
+    main()

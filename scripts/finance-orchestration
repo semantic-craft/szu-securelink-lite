@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""Bounded helper steps for the standalone finance acceptance run (unit 5).
+
+Each subcommand performs ONE audited step and writes its own receipt; the
+sequence itself is driven by the operator conversation, because two steps are
+deliberately not scriptable: the homepage/CNKI observations are made on the
+real pages in the user's browser, and the restoration confirmation reads the
+official window afterwards.
+
+Subcommands:
+  stop-official    Boot out the loaded official system service (administrator).
+  restore-official Bootstrap the official service back (administrator).
+  snapshot         Full read-only network snapshot into the run directory.
+  process-evidence Process/launchd evidence incl. helper verdicts + own client.
+  journal          Copy the daemon's session journal into the run directory.
+  assemble         Copy the session report and verify the nine evidence files.
+
+The official client is never uninstalled or re-signed; bootout/bootstrap is
+reversible within the session and both directions are receipted.
+"""
+import argparse
+import datetime
+import json
+import os
+from pathlib import Path
+import shlex
+import shutil
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
+import finance_acceptance  # noqa: E402
+import helper_install  # noqa: E402
+import helper_status  # noqa: E402
+
+OFFICIAL_LABEL = "com.securelink.client"
+OFFICIAL_PLIST = "/Library/LaunchDaemons/" + OFFICIAL_LABEL + ".plist"
+JOURNAL_PATH = "/var/log/szu-executor-journal.json"
+NATIVE_NAMES = ("szu-securelink", "executor-engine")
+
+
+def _stamp() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def stop_official(run_dir: Path) -> int:
+    script = "\n".join([
+        "set -eu",
+        "if /bin/launchctl print system/" + shlex.quote(OFFICIAL_LABEL) + " >/dev/null 2>&1; then",
+        "  /bin/launchctl bootout system/" + shlex.quote(OFFICIAL_LABEL),
+        "fi",
+        "if /bin/launchctl print system/" + shlex.quote(OFFICIAL_LABEL) + " >/dev/null 2>&1; then",
+        "  exit 71",
+        "fi",
+    ]) + "\n"
+    helper_install.osascript_admin(script)
+    receipt = {"action": "bootout", "label": OFFICIAL_LABEL, "at": _stamp()}
+    (run_dir / "official-backend-stop.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    print(json.dumps(receipt))
+    return 0
+
+
+def restore_official(run_dir: Path) -> int:
+    script = "\n".join([
+        "set -eu",
+        "/bin/launchctl bootstrap system " + shlex.quote(OFFICIAL_PLIST),
+        "/bin/launchctl print system/" + shlex.quote(OFFICIAL_LABEL) + " >/dev/null",
+    ]) + "\n"
+    helper_install.osascript_admin(script)
+    receipt = {"action": "bootstrap", "label": OFFICIAL_LABEL, "at": _stamp()}
+    (run_dir / "official-backend-restore.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    print(json.dumps(receipt))
+    return 0
+
+
+def snapshot(run_dir: Path, name: str) -> int:
+    body = finance_acceptance.collect_network()
+    (run_dir / f"network-{name}.json").write_text(json.dumps(body, indent=2) + "\n")
+    print(json.dumps({"snapshot": name, "routes": len(body["routes"]),
+                      "resolvers": len(body["resolvers"])}))
+    return 0
+
+
+def process_evidence(run_dir: Path) -> int:
+    processes = finance_acceptance.collect_processes()
+    helper = finance_acceptance.collect_helper_launchd(helper_status.query)
+    if helper.get("systemLaunchdChecked"):
+        processes["systemLaunchdChecked"] = True
+        processes["officialLaunchdLoaded"] = bool(helper.get("officialLaunchdLoadedViaHelper"))
+        processes["officialLoadedLabels"] = helper.get("officialLoadedLabelsViaHelper", [])
+    processes["serviceVerdicts"] = helper.get("serviceVerdicts")
+    processes["systemLaunchdViaHelper"] = helper.get("systemLaunchdViaHelper", False)
+    processes["helperSha256"] = helper.get("helperSha256")
+    native = []
+    for name in NATIVE_NAMES:
+        run = subprocess.run(["/usr/bin/pgrep", "-x", name], capture_output=True, text=True, timeout=30)
+        pids = [int(line) for line in run.stdout.split() if line.strip().isdecimal()]
+        native.append({"name": name, "pids": pids})
+    processes["nativeProcesses"] = [item for item in native if item["pids"]]
+    (run_dir / "process-evidence.json").write_text(json.dumps(processes, indent=2) + "\n")
+    print(json.dumps({"officialBackendProcesses": processes["officialBackendProcesses"],
+                      "officialLaunchdLoaded": processes["officialLaunchdLoaded"],
+                      "systemLaunchdChecked": processes["systemLaunchdChecked"],
+                      "nativeProcesses": processes["nativeProcesses"]}))
+    return 0
+
+
+def journal(run_dir: Path) -> int:
+    source = Path(JOURNAL_PATH)
+    if not source.is_file():
+        print(json.dumps({"error": "daemon journal not published yet"}))
+        return 1
+    shutil.copy2(source, run_dir / "plan-journal.json")
+    os.chmod(run_dir / "plan-journal.json", 0o600)
+    print(json.dumps({"copied": str(source)}))
+    return 0
+
+
+def assemble(run_dir: Path, session_report: Path) -> int:
+    if session_report.is_file():
+        target = run_dir / "acceptance-observation.json"
+        shutil.copy2(session_report, target)
+        os.chmod(target, 0o600)
+    missing = [name for name in finance_acceptance.EVIDENCE_FILES if not (run_dir / name).is_file()]
+    print(json.dumps({"missing": missing,
+                      "present": sorted(item.name for item in run_dir.iterdir())}))
+    return 0 if not missing else 1
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("command", choices=["stop-official", "restore-official", "snapshot",
+                                            "process-evidence", "journal", "assemble"])
+    parser.add_argument("--run-dir", type=Path, required=True)
+    parser.add_argument("--name", choices=["before", "after", "restored"])
+    parser.add_argument("--session-report", type=Path,
+                        help="live-cas-test session report copied to acceptance-observation.json")
+    args = parser.parse_args()
+    run_dir = args.run_dir.resolve()
+    if ROOT not in run_dir.parents or run_dir.name.startswith("finance-") is False:
+        parser.error("--run-dir must live under out/finance-<stamp>/")
+    run_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if args.command == "stop-official":
+        return stop_official(run_dir)
+    if args.command == "restore-official":
+        return restore_official(run_dir)
+    if args.command == "snapshot":
+        if not args.name:
+            parser.error("snapshot requires --name")
+        return snapshot(run_dir, args.name)
+    if args.command == "process-evidence":
+        return process_evidence(run_dir)
+    if args.command == "journal":
+        return journal(run_dir)
+    return assemble(run_dir, args.session_report or Path("/nonexistent"))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

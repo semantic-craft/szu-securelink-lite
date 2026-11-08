@@ -1,0 +1,19 @@
+[package]
+name = "szu-securelink-rs"
+version = "0.2.0"
+edition = "2024"
+description = "Pure-Rust Zero-Trust tunnel core and GPUI-Kit desktop client for SZU SecureLink"
+license = "MIT"
+default-run = "szu-securelink"
+
+[lib]
+name = "szu_securelink_rs"
+path = "src/lib.rs"
+
+[[bin]]
+name = "szu-securelink"
+path = "src/main.rs"
+
+[dependencies]
+gpui-kit = "0.9.0"
+tray-icon = "0.26.1"

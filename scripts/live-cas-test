@@ -1,0 +1,357 @@
+#!/usr/bin/env python3
+"""Bound a GUI test and restore the URL handler on every ordinary exit path."""
+import argparse
+import datetime
+import json
+import math
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import time
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
+import finance_acceptance  # noqa: E402  (read-only network snapshot collector)
+
+
+def login_cooldown_remaining(root=ROOT, now=None):
+    path = root / "out/login-cooldown.json"
+    if not path.exists():
+        return 0
+    value = json.loads(path.read_text())["notBeforeUnix"]
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError("invalid-login-cooldown")
+    return max(0, int(value - (time.time() if now is None else now)) + 1)
+
+
+def stop_owned_group(process):
+    """Only for our Popen(start_new_session=True); never use a discovered PID."""
+    group = process.pid
+    if group <= 1 or group == os.getpgrp():
+        raise RuntimeError("invalid-owned-group")
+    for action in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(group, action)
+        except ProcessLookupError:
+            process.poll()
+            return
+        except PermissionError:
+            pass  # macOS can report EPERM while the last group member exits.
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            process.poll()  # reap the direct child before testing group liveness
+            try:
+                os.killpg(group, 0)
+            except ProcessLookupError:
+                return
+            except PermissionError:
+                pass  # Wait for ESRCH; permission failure never proves exit.
+            time.sleep(0.05)
+    raise RuntimeError("owned-group-still-running")
+
+
+def cleanup(process, run, invoke, root=ROOT, *, owned_group=False, tunnel_removed=False):
+    errors = []
+    if process is not None:
+        try:
+            if owned_group:
+                stop_owned_group(process)
+            elif process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+        except Exception:
+            errors.append("test-process-cleanup-failed")
+    backup = root / "out/cas-handler-backup.json"
+    restored = False
+    if backup.exists():
+        try:
+            invoke([str(root / "scripts/cas-diagnostic"), "restore", "--allow-protocol-change"])
+            original = json.loads(backup.read_text())["originalHandler"]
+            current = subprocess.check_output([str(root / "out/cas-url-handler"), "status"], text=True).strip()
+            if current != original:
+                raise RuntimeError("handler-mismatch")
+            backup.rename(run / "handler-backup.json")
+            restored = True
+        except Exception:
+            errors.append("handler-restoration-failed-backup-retained")
+    launch_requested = False
+    if owned_group and "test-process-cleanup-failed" in errors:
+        errors.append("official-client-launch-deferred-active-test-process")
+    else:
+        try:
+            invoke(["/usr/bin/open", "-b", "com.wangsu.securelink"])
+            launch_requested = True
+        except Exception:
+            errors.append("official-client-launch-failed")
+    receipt = {"handlerRestored": restored, "officialLaunchRequested": launch_requested,
+               "connectionRestored": False, "tunnelRemoved": tunnel_removed, "errors": errors}
+    (run / "cleanup.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    return not errors
+
+
+def accepted_report(value, *, backend_auth=False, backend_config=False, engine_evaluation=False, handshake=False, handshake_network=False, capture_plan=False, data_session=False, dig_requested=False, finance=False):
+    if capture_plan and not (handshake and handshake_network):
+        return False
+    if data_session and (handshake or backend_auth or engine_evaluation):
+        return False
+    if finance and not data_session:
+        return False
+    if not value.get("finished") or value.get("transportFailed"):
+        return False
+    if finance:
+        # Slice D gate: the standalone session receipt must carry the tunnel
+        # and campus truth itself, not just the data-session sub-receipt.
+        if not (value.get("mode") == "bounded-standalone-finance"
+                and value.get("tunnel") == "connected"
+                and value.get("campusValidated") is True
+                and value.get("financeHomepageValidated") is True
+                and value.get("officialBackendStillRequired") is False
+                and value.get("sensitiveFieldsRecorded") is False):
+            return False
+    if data_session:
+        receipt = value.get("backendDataSession", {})
+        if not isinstance(receipt, dict):
+            return False
+        if not (receipt.get("mode") == "bounded-data-session"
+                and receipt.get("reason") == "data-session-verified"
+                and receipt.get("fdAccepted") is True and receipt.get("tunnelStarted") is True
+                and receipt.get("connectedInDataMode") is True and receipt.get("disconnectSent") is True
+                and receipt.get("pingRan") is True and receipt.get("unexpectedConnected") is False
+                and str(receipt.get("interface", "")).startswith("utun")
+                and receipt.get("planComplete") is True
+                and isinstance(receipt.get("pingReceived"), int) and not isinstance(receipt.get("pingReceived"), bool)
+                and receipt.get("pingReceived") > 0):
+            return False
+        # Unit 3: when an in-tunnel DNS probe was requested, the resolver must
+        # actually answer through the tunnel (vendor-dns-host-route evidence).
+        if dig_requested and not (receipt.get("digRan") is True
+                and receipt.get("digStatus") == "NOERROR"
+                and isinstance(receipt.get("digAnswers"), int) and not isinstance(receipt.get("digAnswers"), bool)
+                and receipt.get("digAnswers") > 0
+                and receipt.get("digExitStatus") == 0):
+            return False
+    if handshake:
+        receipt = value.get("backendHandshake", {})
+        if not (isinstance(receipt, dict) and receipt.get("mode") == "bounded-handshake-probe"
+                and receipt.get("connected") is False and receipt.get("tunnelStarted") is False
+                and receipt.get("routesChanged") is False and receipt.get("dnsChanged") is False
+                and receipt.get("unexpectedConnected") is False):
+            return False
+        if capture_plan and not (receipt.get("planCaptureRequested") is True and receipt.get("planComplete") is True):
+            return False
+        if handshake_network:
+            if not (receipt.get("connectCalled") is True and receipt.get("tunnelSetupRequested") is True
+                    and receipt.get("reason") == "tunnel-boundary"):
+                return False
+        elif receipt.get("reason") != "input-validated" or receipt.get("connectCalled") is not False:
+            return False
+    if engine_evaluation:
+        receipt = value.get("backendEngineEvaluation", {})
+        if not (isinstance(receipt, dict) and receipt.get("accepted") is True
+                and receipt.get("mode") == "offline-config-evaluation"
+                and receipt.get("networkOpened") is False and receipt.get("tunnelStarted") is False):
+            return False
+    if backend_auth or backend_config:
+        expected = "bounded-direct-backend-configuration" if backend_config else "bounded-direct-backend-preauthentication"
+        return ((not backend_config or (value.get("backendConfigurationValidated") is True
+                    and "backend-configuration-received" in value.get("phases", [])))
+                and (finance or value.get("mode") == expected)
+                and value.get("officialIPCUsed") is False
+                and value.get("backendAuthenticationValidated") is True
+                and value.get("backendUserLogout") == "accepted"
+                and "backend-authenticated" in value.get("phases", []))
+    return "initialized" in value.get("phases", [])
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--allow-session-interruption", action="store_true", required=True)
+    parser.add_argument("--allow-protocol-change", action="store_true", required=True)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--connection", action="store_true")
+    mode.add_argument("--backend-auth", action="store_true")
+    mode.add_argument("--backend-config", action="store_true")
+    parser.add_argument("--seconds", type=int, default=300)
+    parser.add_argument("--engine-evaluator", type=Path)
+    parser.add_argument("--handshake-probe", type=Path)
+    parser.add_argument("--allow-handshake", action="store_true")
+    parser.add_argument("--capture-plan", action="store_true", help="Collect the server network plan without creating a tunnel")
+    parser.add_argument("--data-session", action="store_true", help="Run the merged data engine: executor tunnel plus OpenVPN3 session with an in-tunnel ping")
+    parser.add_argument("--engine", type=Path, help="merged data engine binary (out/executor-build/executor-engine)")
+    parser.add_argument("--executor-socket", default="/var/run/local.szu.securelink.helper-executor")
+    parser.add_argument("--hold-ms", type=int, default=60000)
+    parser.add_argument("--ping-peer", default="1.1.96.1", help="in-tunnel peer expected to answer ICMP")
+    parser.add_argument("--ping-count", type=int, default=3)
+    parser.add_argument("--dig-server", help="in-tunnel DNS probe: resolver expected to answer via a vendor-dns-host-route")
+    parser.add_argument("--dig-name", default="szu.edu.cn", help="query name for the in-tunnel DNS probe")
+    parser.add_argument("--finance", action="store_true", help="standalone finance acceptance: tunnel field, homepage observation citation and campus validation in the session receipt")
+    args = parser.parse_args()
+    if args.engine_evaluator and (not args.backend_config or not os.access(args.engine_evaluator, os.X_OK)):
+        parser.error("--engine-evaluator requires --backend-config and an executable file")
+    if args.handshake_probe and (not args.backend_config or not os.access(args.handshake_probe, os.X_OK)):
+        parser.error("--handshake-probe requires --backend-config and an executable file")
+    if args.allow_handshake and not args.handshake_probe:
+        parser.error("--allow-handshake requires --handshake-probe")
+    if args.capture_plan and not args.allow_handshake:
+        parser.error("--capture-plan requires --allow-handshake")
+    if args.data_session:
+        if args.handshake_probe or args.allow_handshake or args.capture_plan or args.engine_evaluator:
+            parser.error("--data-session is mutually exclusive with the handshake probe paths")
+        if not args.engine or not os.access(args.engine, os.X_OK):
+            parser.error("--data-session requires --engine and an executable file")
+        if not 1000 <= args.hold_ms <= 560000:
+            parser.error("--hold-ms must be between 1000 and 560000")
+        if not 1 <= args.ping_count <= 10:
+            parser.error("--ping-count must be between 1 and 10")
+        import socket as socket_module
+        try:
+            socket_module.inet_aton(args.ping_peer)
+        except OSError:
+            parser.error("--ping-peer must be a numeric IPv4 address")
+        dig_requested = args.dig_server is not None
+        if dig_requested:
+            try:
+                socket_module.inet_aton(args.dig_server)
+            except OSError:
+                parser.error("--dig-server must be a numeric IPv4 address")
+            if not args.dig_name or len(args.dig_name) > 253 or any(
+                    not label or label.startswith("-") or label.endswith("-") or len(label) > 63
+                    or any(not (c.isalnum() or c == "-") for c in label)
+                    for label in args.dig_name.split(".")):
+                parser.error("--dig-name must be a plain domain name")
+        if args.finance and not args.dig_server:
+            parser.error("--finance requires --dig-server for the in-tunnel resolver proof")
+        args.backend_config = True
+    if not 40 <= args.seconds <= 1200:
+        parser.error("--seconds must be between 40 and 600")
+    try:
+        remaining = login_cooldown_remaining()
+    except (OSError, ValueError, KeyError, TypeError):
+        parser.error("Cannot verify the observed login cooldown; inspect out/login-cooldown.json")
+    if remaining:
+        parser.error(f"Observed school login rate limit: wait at least {remaining} seconds before another trial")
+    if (ROOT / "out/cas-handler-backup.json").exists():
+        parser.error("A prior handler backup exists. Restore and verify it before starting another trial.")
+    # Exact GUI name, not the similarly named privileged background components.
+    if subprocess.run(["/usr/bin/pgrep", "-x", "SecureLink"], stdout=subprocess.DEVNULL).returncode == 0:
+        parser.error("Quit the official GUI normally before the trial.")
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    run = ROOT / "out" / ("live-cas-" + stamp)
+    run.mkdir(mode=0o700)
+    os.umask(0o077)
+    process = None
+    passed = False
+    authentication_validated = False
+    configuration_validated = False
+    interrupted = False
+
+    def stop(signum, frame):
+        nonlocal interrupted
+        interrupted = True
+
+    for name in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(name, stop)
+    with (run / "driver.log").open("wb") as log:
+        def invoke(command):
+            subprocess.run(command, cwd=ROOT, stdout=log, stderr=log, check=True, timeout=120)
+        try:
+            invoke([str(ROOT / "scripts/cas-diagnostic"), "prepare"])
+            if interrupted:
+                return 1
+            invoke([str(ROOT / "scripts/cas-diagnostic"), "activate", "--allow-protocol-change"])
+            if interrupted:
+                return 1
+            app = ROOT / "out/SZU SecureLink-CAS-diagnostic.app/Contents/MacOS/szu-securelink"
+            flag = "--backend-configuration-test" if args.backend_config else ("--backend-preauthentication-test" if args.backend_auth else ("--cas-connect-test" if args.connection else "--cas-preauthentication-test"))
+            command = [str(app), flag, "--session-report", str(run / "session.json")]
+            if args.engine_evaluator:
+                command += ["--engine-evaluator", str(args.engine_evaluator.resolve())]
+            if args.data_session:
+                command += ["--data-session-engine", str(args.engine.resolve()),
+                            "--executor-socket", args.executor_socket,
+                            "--hold-ms", str(args.hold_ms),
+                            "--ping-peer", args.ping_peer,
+                            "--ping-count", str(args.ping_count)]
+                if dig_requested:
+                    command += ["--dig-server", args.dig_server, "--dig-name", args.dig_name]
+                if args.finance:
+                    command += ["--finance", "--homepage-observation", str((run / "homepage-observation.json").resolve())]
+            if args.handshake_probe:
+                command += ["--handshake-probe", str(args.handshake_probe.resolve())]
+                if args.allow_handshake:
+                    command += ["--allow-handshake"]
+                if args.capture_plan:
+                    command += ["--capture-plan"]
+            process = subprocess.Popen(command,
+                                       stdout=log, stderr=log, start_new_session=True)
+            print(json.dumps({"run": str(run), "pid": process.pid, "maximumSeconds": args.seconds}), flush=True)
+            deadline = time.monotonic() + args.seconds
+            # Unit-4 evidence: one routing-table snapshot mid-hold, only for
+            # data sessions long enough to matter. Read-only, into the run dir.
+            snapshot_at = None
+            snapshot_done = False
+            if args.data_session:
+                snapshot_at = time.monotonic() + max(20.0, args.hold_ms / 1000.0 * 0.35)
+            while not interrupted and process.poll() is None and time.monotonic() < deadline:
+                if snapshot_at is not None and not snapshot_done and time.monotonic() >= snapshot_at:
+                    snapshot_done = True
+                    try:
+                        if args.finance:
+                            (run / "network-after.json").write_text(
+                                json.dumps(finance_acceptance.collect_network(), indent=2) + "\n")
+                        else:
+                            body = subprocess.run(["/usr/sbin/netstat", "-rn"], capture_output=True,
+                                                  text=True, timeout=30).stdout
+                            (run / "network-midhold.json").write_text(
+                                json.dumps({"routes": body}, indent=2) + "\n")
+                    except Exception:
+                        pass  # evidence is best-effort; the run continues
+                report = run / "session.json"
+                if report.exists():
+                    try:
+                        value = json.loads(report.read_text())
+                        if value.get("finished"):
+                            authentication_validated = value.get("backendAuthenticationValidated") is True
+                            configuration_validated = value.get("backendConfigurationValidated") is True
+                            passed = accepted_report(value, backend_auth=args.backend_auth, backend_config=args.backend_config, engine_evaluation=bool(args.engine_evaluator), handshake=bool(args.handshake_probe), handshake_network=args.allow_handshake, capture_plan=args.capture_plan, data_session=args.data_session, dig_requested=dig_requested, finance=args.finance)
+                            if passed:
+                                (run / "acceptance-observation.json").write_text(json.dumps(value, indent=2) + "\n")
+                            break
+                    except (OSError, ValueError):
+                        pass
+                time.sleep(0.25)
+        except Exception as error:
+            # Exception types are useful; command output and credential-bearing URLs are not.
+            print(json.dumps({"error": type(error).__name__, "run": str(run)}), flush=True)
+        finally:
+            tunnel_removed = False
+            if args.data_session and process is not None and process.poll() is not None:
+                report = run / "session.json"
+                try:
+                    value = json.loads(report.read_text())
+                    session = value.get("backendDataSession")
+                    tunnel_removed = isinstance(session, dict) and session.get("disconnectSent") is True
+                except (OSError, ValueError):
+                    tunnel_removed = False
+                if args.finance:
+                    # The engine disconnects before exiting; capture the
+                    # restored state before the official client comes back.
+                    try:
+                        (run / "network-restored.json").write_text(
+                            json.dumps(finance_acceptance.collect_network(), indent=2) + "\n")
+                    except Exception:
+                        pass
+            cleaned = cleanup(process, run, invoke, owned_group=True, tunnel_removed=tunnel_removed)
+            print(json.dumps({"run": str(run), "protocolInitialized": passed and not (args.backend_auth or args.backend_config), "backendAuthenticationValidated": authentication_validated and (args.backend_auth or args.backend_config), "backendConfigurationValidated": configuration_validated and args.backend_config, "cleanupSucceeded": cleaned,
+                              "campusValidated": False}), flush=True)
+    return 0 if passed and cleaned else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

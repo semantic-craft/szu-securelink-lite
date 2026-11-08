@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <clipPath id="squircleClip">
+      <rect x="64" y="64" width="896" height="896" rx="204"/>
+    </clipPath>
+    <linearGradient id="bgWarm" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FCF9F5"/>
+      <stop offset="100%" stop-color="#F3EDE4"/>
+    </linearGradient>
+    <linearGradient id="headCrimson" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#B02E42"/>
+      <stop offset="100%" stop-color="#8C2232"/>
+    </linearGradient>
+    <linearGradient id="cheekCrimson" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#C84357"/>
+      <stop offset="100%" stop-color="#9A2638"/>
+    </linearGradient>
+  </defs>
+
+  <g clip-path="url(#squircleClip)">
+    <rect x="64" y="64" width="896" height="896" fill="url(#bgWarm)"/>
+
+    <circle cx="356" cy="436" r="76" fill="url(#headCrimson)"/>
+    <circle cx="668" cy="436" r="76" fill="url(#headCrimson)"/>
+
+    <ellipse cx="512" cy="648" rx="336" ry="256" fill="url(#headCrimson)"/>
+
+    <ellipse cx="284" cy="708" rx="164" ry="132" fill="url(#cheekCrimson)"/>
+    <ellipse cx="740" cy="708" rx="164" ry="132" fill="url(#cheekCrimson)"/>
+
+    <circle cx="446" cy="616" r="24" fill="#2A090E"/>
+    <circle cx="578" cy="616" r="24" fill="#2A090E"/>
+
+    <path d="M64 816 Q512 712 960 816 L960 960 L64 960 Z" fill="#420D16"/>
+  </g>
+</svg>

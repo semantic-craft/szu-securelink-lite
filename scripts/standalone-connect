@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""Standalone connection entry for the native tunnel executor.
+
+Modes:
+  --self-test  Build and run the offline engine/daemon policy suites (no
+               network, no privileges, no system mutation).
+  tunnel ...   Bounded real-machine run (3e). Refuses to start unless the
+               tunnel-capable privileged daemon is installed and verified;
+               this gate stays closed until that unit lands.
+
+The official client and its configuration are never touched by this script.
+"""
+import argparse
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
+import helper_status  # noqa: E402
+
+EXECUTOR_LABEL = "local.szu.securelink.executor"
+
+
+def self_test() -> int:
+    suites = {
+        "plan-ops-operations": (["plan_ops_main.mm"], ["operations"], True),
+        "plan-ops-push-operations": (["plan_ops_main.mm"], ["push-operations"], True),
+        "plan-ops-lease": (["plan_ops_main.mm"], ["lease-mismatch"], True),
+        "plan-ops-scenarios": (["plan_ops_main.mm"], ["scenarios"], True),
+        "system-ops": (["system_ops_test.mm"], [], False),
+        "tunnel-transaction": (["tunnel_transaction_test.mm", "ipc.mm"], [], False),
+        "engine-transaction": (["engine_transaction_test.mm", "ipc.mm"], [], False),
+    }
+    flags = ["-std=c++17", "-O1", "-Wall", "-Wextra", "-Werror",
+             "-framework", "Foundation", "-framework", "Security", "-lbsm"]
+    with tempfile.TemporaryDirectory(prefix="standalone-selftest-") as temporary:
+        for name, (files, run_args, prints_result) in suites.items():
+            binary = Path(temporary) / name.replace("-", "_")
+            sources = [str(ROOT / "native/network-helper" / item) for item in files]
+            build = subprocess.run(
+                ["xcrun", "clang++", *flags, *sources, "-o", str(binary)],
+                capture_output=True, timeout=180)
+            if build.returncode != 0:
+                print(f"{name}: build failed\n{build.stderr.decode()[-600:]}", file=sys.stderr)
+                return 1
+            run = subprocess.run([str(binary), *run_args], capture_output=True, timeout=60)
+            if run.returncode != 0:
+                print(f"{name}: scenario failed\n{run.stderr.decode()[-600:]}",
+                      file=sys.stderr)
+                return 1
+            if prints_result and not run.stdout:
+                print(f"{name}: no result output", file=sys.stderr)
+                return 1
+            if not prints_result and run.stdout:
+                print(f"{name}: unexpected output on a silent suite", file=sys.stderr)
+                return 1
+            print(f"{name}: ok")
+    return 0
+
+
+def executor_installed() -> bool:
+    """True when the tunnel-capable executor daemon is installed (unit 3e
+    verified its bounded real-machine run; see out/executor-probe/)."""
+    daemon = Path("/Library/PrivilegedHelperTools/local.szu.securelink.helper-executor")
+    return daemon.is_file() and Path("/var/run/local.szu.securelink.helper-executor").exists()
+
+
+def entry_ready() -> int:
+    """Exit 0 only when the entry can actually run a verified executor."""
+    return 0 if executor_installed() else 1
+
+
+def tunnel() -> int:
+    print("standalone-connect: tunnel mode refused. Full standalone "
+          "orchestration (authenticated plan capture from the gateway, "
+          "finance homepage verification) is not wired yet; the executor "
+          "itself is installed and verified.", file=sys.stderr)
+    return 1
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--self-test", action="store_true",
+                        help="run offline policy suites; no system changes")
+    parser.add_argument("--entry-ready", action="store_true",
+                        help="exit 0 only when a verified executor is in place (gate probe)")
+    parser.add_argument("tunnel", nargs="?", help="bounded real run (blocked until 3e)")
+    args = parser.parse_args()
+    if args.self_test:
+        return self_test()
+    if args.entry_ready:
+        return entry_ready()
+    if args.tunnel == "tunnel":
+        return tunnel()
+    parser.print_help()
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

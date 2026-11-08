@@ -1,0 +1,45 @@
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")/.."
+app="$PWD/out/SZU SecureLink-CAS-diagnostic.app"
+backup="$PWD/out/cas-handler-backup.json"
+helper="$PWD/out/cas-url-handler"
+register="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+case "${1:-}" in
+  prepare)
+    test ! -e "$backup"
+    ./scripts/build-app "$app"
+    /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier local.szu.securelink.casdiagnostic' "$app/Contents/Info.plist"
+    swiftc scripts/cas-url-handler.swift -o "$helper"
+    "$helper" status
+    ;;
+  status)
+    "$helper" status
+    ;;
+  activate)
+    test "${2:-}" = '--allow-protocol-change'
+    test ! -e "$backup"
+    test -x "$helper"
+    "$helper" record --allow-protocol-change "$backup"
+    python3 - "$app/Contents/Info.plist" <<'PYINFO'
+import plistlib,sys
+p=sys.argv[1]
+with open(p,'rb') as f: info=plistlib.load(f)
+assert info['CFBundleIdentifier']=='local.szu.securelink.casdiagnostic'
+info['CFBundleURLTypes']=[{'CFBundleURLName':'Bounded CAS diagnostic','CFBundleURLSchemes':['securelink']}]
+with open(p,'wb') as f: plistlib.dump(info,f)
+PYINFO
+    codesign --force --sign - "$app"
+    "$register" -f "$app"
+    "$helper" activate --allow-protocol-change "$backup"
+    ;;
+  restore)
+    test "${2:-}" = '--allow-protocol-change'
+    "$helper" restore --allow-protocol-change "$backup"
+    "$register" -u "$app"
+    ;;
+  *)
+    printf '%s\n' 'Usage: scripts/cas-diagnostic prepare|status|activate --allow-protocol-change|restore --allow-protocol-change'
+    exit 2
+    ;;
+esac

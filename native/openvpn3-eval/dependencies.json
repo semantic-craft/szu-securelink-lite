@@ -1,0 +1,16 @@
+{
+  "openvpn3": {
+    "repository": "https://github.com/OpenVPN/openvpn3.git",
+    "tag": "release/3.11.8",
+    "commit": "4f3bdef73245d4ee9e8216c5d65baccc9568f6ef",
+    "directory": "source",
+    "license": "MPL-2.0 OR AGPL-3.0-only WITH openvpn3-openssl-exception"
+  },
+  "asio": {
+    "repository": "https://github.com/chriskohlhoff/asio.git",
+    "tag": "asio-1-32-0",
+    "commit": "03ae834edbace31a96157b89bf50e5ee464e5ef9",
+    "directory": "asio",
+    "license": "BSL-1.0"
+  }
+}

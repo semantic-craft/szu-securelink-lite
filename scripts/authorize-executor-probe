@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""Bounded real-machine probe for the tunnel executor (unit 3e).
+
+No administrator prompt: the executor daemon is already installed; this runs
+as the user. Sequence: snapshot network state, drive the engine transaction
+against the daemon, snapshot again, disconnect, wait for restoration, snapshot
+a third time, and compare. The plan is SYNTHETIC (TEST-NET ranges and a
+.invalid scoped DNS domain) and the receipt labels that; this never touches
+campus resources and is not campus acceptance.
+"""
+import argparse
+import datetime
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+ROOT = Path(__file__).resolve().parent.parent
+OUT = ROOT / "out" / "executor-probe"
+BUILD = ROOT / "out" / "executor-build"
+SOCKET = "/var/run/local.szu.securelink.helper-executor"
+ROUTE_MARKER = "1.1.96"
+
+
+def snapshot(target: Path) -> None:
+    commands = {
+        "routes": ["/usr/sbin/netstat", "-rn"],
+        "interfaces": ["/sbin/ifconfig"],
+        "dns": ["/usr/sbin/scutil", "--dns"],
+    }
+    body = {}
+    for name, argv in commands.items():
+        run = subprocess.run(argv, capture_output=True, text=True, timeout=30)
+        body[name] = run.stdout
+    target.write_text(json.dumps(body, indent=2) + "\n")
+
+
+def marker_present(snapshot_path: Path, marker: str) -> bool:
+    data = json.loads(snapshot_path.read_text())
+    return any(marker in line for line in data["routes"].splitlines())
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--run", action="store_true",
+                        help="run the bounded probe (read-only snapshots plus the engine transaction)")
+    parser.add_argument("--plan", type=Path, default=BUILD / "plan.json")
+    parser.add_argument("--route-marker", default=ROUTE_MARKER)
+    parser.add_argument("--label", default="synthetic-plan")
+    parser.add_argument("--update-plan", type=Path,
+                        help="unit-4 delta plan submitted mid-hold through the update frame")
+    parser.add_argument("--update-delay-seconds", type=int, default=3)
+    args = parser.parse_args()
+    if not args.run:
+        parser.print_help()
+        return 2
+
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_dir = OUT / f"probe-{stamp}"
+    run_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+    before = run_dir / "network-before.json"
+    snapshot(before)
+    route_before = marker_present(before, args.route_marker)
+
+    engine_argv = [
+        str(BUILD / "executor-engine"),
+        "--probe-transaction",
+        "--socket", SOCKET,
+        "--plan", str(args.plan),
+        "--context", str(BUILD / "executor-context.json"),
+        "--identity", str(BUILD / "lease-identity.txt"),
+        "--hold-seconds", "8" if args.update_plan else "6",
+    ]
+    if args.update_plan:
+        engine_argv += ["--update-plan", str(args.update_plan),
+                        "--update-delay-seconds", str(max(2, args.update_delay_seconds))]
+    engine = subprocess.Popen(engine_argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    # Snapshot while the engine holds the session open. Large audited plans
+    # (125+ static routes) apply for several seconds before the routes land,
+    # so poll the table until the marker appears, the engine exits, or 20s.
+    during = run_dir / "network-during.json"
+    poll_deadline = time.monotonic() + 20
+    while True:
+        snapshot(during)
+        if marker_present(during, args.route_marker) or engine.poll() is not None \
+                or time.monotonic() >= poll_deadline:
+            break
+        time.sleep(1)
+    route_during = marker_present(during, args.route_marker)
+    out, err = engine.communicate(timeout=60)
+    (run_dir / "engine-receipt.json").write_text(out or "{}")
+    (run_dir / "engine-stderr.txt").write_text(err)
+
+    # The daemon removes 130+ routes; poll until the cleanup converges.
+    restored = run_dir / "network-restored.json"
+    restore_deadline = time.monotonic() + 30
+    while True:
+        snapshot(restored)
+        route_restored = marker_present(restored, args.route_marker)
+        if engine.poll() is not None and not route_restored:
+            break
+        if time.monotonic() >= restore_deadline:
+            break
+        time.sleep(1)
+    route_restored = marker_present(restored, args.route_marker)
+
+    engine_result = {}
+    try:
+        engine_result = json.loads(out or "{}")
+    except ValueError:
+        pass
+
+    if args.label == "synthetic-plan":
+        # TEST-NET plan: the ranges must be absent before, present during,
+        # absent after — the original three-state check applies.
+        checks = {
+            "routeAbsentBefore": route_before is False,
+            "routePresentDuring": route_during is True,
+            "routeAbsentAfterCleanup": route_restored is False,
+            "enginePhaseActive": engine_result.get("phase") == "active",
+            "engineAcceptedFd": engine_result.get("fdAccepted") is True,
+            "tunnelInterfaceIsUtun": str(engine_result.get("interface", "")).startswith("utun"),
+        }
+    else:
+        # Real plan: the official client may legitimately hold overlapping
+        # routes, so absolute presence proves nothing. Verify the DELTA
+        # instead: route entries via OUR interface must appear during and
+        # revert after. The interface name comes from the engine receipt.
+        interface = str(engine_result.get("interface", ""))
+        def iface_routes(snapshot_path: Path) -> list:
+            data = json.loads(snapshot_path.read_text())
+            return [line for line in data["routes"].splitlines()
+                    if line.rstrip().endswith(interface) or f" {interface}" in line]
+        ours_before = iface_routes(before)
+        ours_during = iface_routes(during)
+        ours_after = iface_routes(restored)
+        checks = {
+            "ourInterfaceRoutesAppearedDuring": bool(ours_during),
+            "ourInterfaceRoutesRevertedAfter": ours_after == ours_before,
+            "enginePhaseActive": engine_result.get("phase") == "active",
+            "engineAcceptedFd": engine_result.get("fdAccepted") is True,
+            "tunnelInterfaceIsUtun": interface.startswith("utun"),
+        }
+    passed = all(checks.values())
+    receipt = {
+        "mode": args.label,
+        "layer": "bounded-executor-verification",
+        "notCampusAcceptance": args.label == "synthetic-plan",
+        "checks": checks,
+        "passed": passed,
+        "engine": engine_result,
+        "runDirectory": str(run_dir),
+        "evaluatedAt": stamp,
+    }
+    (run_dir / "receipt.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+    print(json.dumps(receipt, indent=2, sort_keys=True))
+    return 0 if passed else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

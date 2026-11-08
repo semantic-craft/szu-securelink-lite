@@ -1,0 +1,8 @@
+out/
+.scratch/
+.build/
+target/
+pgo-data/
+__pycache__/
+*.pyc
+.DS_Store

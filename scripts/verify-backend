@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""Run a bounded backend stage or verify a preserved real-run receipt.
+
+Stages auth/config/evaluate/handshake drive `scripts/live-cas-test`. Stage
+`finance` is the Slice D acceptance gate: with `--receipt` it judges a preserved
+standalone run, and without it it only collects read-only prerequisite evidence
+and fails closed, because own TUN/route/DNS execution does not exist yet.
+"""
+import argparse
+import datetime
+import json
+from pathlib import Path
+import runpy
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
+import finance_acceptance  # noqa: E402  (path set above; scripts/ is not a package)
+import helper_status  # noqa: E402
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("stage", choices=["auth", "config", "evaluate", "handshake", "finance"])
+    parser.add_argument("--receipt", type=Path, help="Verify existing evidence without repeating login")
+    parser.add_argument("--allow-session-interruption", action="store_true")
+    parser.add_argument("--allow-protocol-change", action="store_true")
+    parser.add_argument("--seconds", type=int, default=300)
+    parser.add_argument("--engine-evaluator", type=Path)
+    parser.add_argument("--handshake-probe", type=Path)
+    parser.add_argument("--allow-handshake", action="store_true")
+    parser.add_argument("--capture-plan", action="store_true")
+    args = parser.parse_args()
+    if args.capture_plan and args.stage != "handshake":
+        parser.error("--capture-plan requires handshake stage")
+    if args.stage == "finance":
+        if args.engine_evaluator or args.handshake_probe or args.allow_handshake:
+            parser.error("finance does not take --engine-evaluator, --handshake-probe or --allow-handshake")
+        if args.receipt:
+            verdict = finance_acceptance.evaluate_run(args.receipt)
+        else:
+            if not args.allow_session_interruption or not args.allow_protocol_change:
+                parser.error("A real finance run interrupts the session and changes the handler; "
+                             "pass both flags, or use --receipt to judge preserved evidence")
+            stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+            verdict = finance_acceptance.prerequisites(ROOT, ROOT / "out" / ("finance-" + stamp),
+                                                       helper_query=helper_status.query)
+        print(json.dumps(verdict, indent=2, ensure_ascii=False))
+        return 0 if verdict["passed"] else 1
+    if args.receipt:
+        try:
+            report = json.loads((args.receipt / "acceptance-observation.json").read_text())
+            cleanup = json.loads((args.receipt / "cleanup.json").read_text())
+            restored = json.loads((args.receipt / "restoration-observation.json").read_text())
+            accept = runpy.run_path(str(ROOT / "scripts/live-cas-test"))["accepted_report"]
+            passed = (accept(report, backend_auth=args.stage == "auth", backend_config=args.stage != "auth", engine_evaluation=args.stage == "evaluate", handshake=args.stage == "handshake", handshake_network=True, capture_plan=args.capture_plan) and cleanup.get("handlerRestored") is True
+                      and cleanup.get("officialLaunchRequested") is True and cleanup.get("errors") == []
+                      and restored.get("officialGUIConnected") is True)
+        except (OSError, ValueError, TypeError, AttributeError):
+            passed = False
+        print(json.dumps({"stage": args.stage, "passed": passed, "mode": "existing-real-run-evidence",
+                          "liveConnectionRechecked": False, "standaloneValidated": False}))
+        return 0 if passed else 1
+    if not args.allow_session_interruption or not args.allow_protocol_change:
+        parser.error("Live testing requires --allow-session-interruption and --allow-protocol-change")
+    command = [str(ROOT / "scripts/live-cas-test"), "--backend-auth" if args.stage == "auth" else "--backend-config",
+               "--allow-session-interruption", "--allow-protocol-change", "--seconds", str(args.seconds)]
+    if args.stage == "evaluate":
+        if not args.engine_evaluator:
+            parser.error("evaluate requires --engine-evaluator")
+        command += ["--engine-evaluator", str(args.engine_evaluator)]
+    if args.stage == "handshake":
+        if not args.handshake_probe or not args.allow_handshake:
+            parser.error("handshake requires --handshake-probe and --allow-handshake")
+        command += ["--handshake-probe", str(args.handshake_probe), "--allow-handshake"]
+    if args.capture_plan:
+        command += ["--capture-plan"]
+    return subprocess.call(command)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")/.."
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
+swift test
+swift run szu-securelink-probe --self-test
+cargo test --all-targets
+cargo test --doc
+cargo clippy --all-targets -- -D warnings

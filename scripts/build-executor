@@ -1,0 +1,167 @@
+#!/usr/bin/env python3
+"""Build the tunnel executor daemon, engine CLI and their trusted bootstrap.
+
+Writes out/executor-build/: ad-hoc signed binaries, staged context and plan
+(TEST-NET ranges only), lease identity, engine cdhash and a receipt. Nothing
+installs here; scripts/install-executor stages the audited root copy.
+"""
+import hashlib
+import json
+import platform
+import shutil
+import subprocess
+import sys
+import tempfile
+import uuid
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+OUT = ROOT / "out" / "executor-build"
+LABEL = "local.szu.securelink.executor"
+
+PLAN = {
+    "version": 2, "ctrlOptionsCaptured": True, "ctrlOptionCount": 0, "ctrlDuplicateKeys": 0,
+    "ctrlDuplicateDomains": 0, "ctrlMappings": [], "domainOptionsCaptured": True,
+    "domainOptions": [], "complete": True, "failure": None, "layer": 3, "mtu": 1400,
+    "remote": {"address": "198.51.100.4", "ipv6": False},
+    "addresses": [{"address": "192.0.2.2", "prefixLength": 30, "gateway": "192.0.2.1",
+                   "ipv6": False, "net30": False}],
+    "routes": [{"address": "192.0.2.128", "prefixLength": 25, "metric": -1, "ipv6": False}],
+    "excludedRoutes": [], "routeMetricDefault": -1, "redirect": None,
+    "dns": {"fromDhcp": True, "searchDomains": [], "servers": [
+        {"priority": 0, "addresses": [{"address": "192.0.2.53", "port": 0}],
+         "domains": []}]},
+    "allowIPv4": True, "allowIPv6": None, "allowLocalDNS": True, "sessionNameDiscarded": True,
+}
+# Trusted bootstrap: verified suffixes are the school's CAS-verified domain.
+CONTEXT = {
+    "sessionID": "5e1c0b7a-3d44-4a5f-8b6e-1f2a3c4d5e6f",
+    # Unit-4 observation window: the audited transaction lifetime covers a
+    # five-minute hold; official sessions run longer, so this is our bound.
+    "durationSeconds": 900, "remotePort": 443,
+    "verifiedDNSSuffixes": ["szu.edu.cn"],
+}
+
+# Unit-4 machinery probe: TEST-NET-3 delta, disjoint from the base plan's
+# TEST-NET-1 routes so the three-state route check has a distinct marker.
+UPDATE_PLAN = dict(PLAN)
+UPDATE_PLAN["routes"] = [{"address": "203.0.113.0", "prefixLength": 24, "metric": -1, "ipv6": False}]
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(65536), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def codesign_adhoc(path: Path, identifier: str) -> None:
+    run = subprocess.run(["codesign", "--force", "--sign", "-", "--identifier", identifier,
+                          str(path)], capture_output=True, timeout=60)
+    if run.returncode != 0:
+        raise SystemExit(f"codesign failed for {path}: {run.stderr.decode()[-300:]}")
+
+
+def cdhash_of(path: Path) -> str:
+    run = subprocess.run(["codesign", "-dvvv", str(path)], capture_output=True, text=True,
+                         timeout=60)
+    for line in (run.stdout + run.stderr).splitlines():
+        if line.strip().startswith("CDHash="):
+            value = line.strip().split("=", 1)[1].strip()
+            if len(value) == 40:
+                return value
+    raise SystemExit(f"no CDHash reported for {path}")
+
+
+def build() -> None:
+    if platform.system() != "Darwin":
+        raise SystemExit("Darwin required")
+    OUT.mkdir(parents=True, exist_ok=True)
+    # The engine binary is the merged data engine (OpenVPN3 session plus the
+    # audited transaction client). It is built from the pinned OpenVPN3 tree;
+    # rebuild incrementally here so a staged cdhash can never lag the sources.
+    build_dir = ROOT / "out" / "openvpn3" / "build"
+    if not (build_dir / "CMakeCache.txt").is_file():
+        raise SystemExit("Missing OpenVPN3 build tree; run scripts/build-openvpn3-eval first")
+    subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "2"],
+                   check=True, timeout=600)
+    staged_engine = build_dir / "szu-openvpn3-data-engine"
+    if not staged_engine.is_file():
+        raise SystemExit("Merged engine missing from the OpenVPN3 build tree")
+    self_test = subprocess.run([str(staged_engine), "--self-test"], capture_output=True,
+                               timeout=120)
+    if self_test.returncode != 0:
+        raise SystemExit(f"data-engine self-test failed: {self_test.stderr.decode()[-400:]}")
+    engine_binary = OUT / "executor-engine"
+    shutil.copy2(staged_engine, engine_binary)
+    sources = {
+        "executor-daemon": ["executor_main.mm", "ipc.mm"],
+    }
+    flags = ["-std=c++17", "-O1", "-Wall", "-Wextra", "-Werror",
+             "-framework", "Foundation", "-framework", "Security",
+             "-framework", "SystemConfiguration", "-lbsm"]
+    for name, files in sources.items():
+        binary = OUT / name
+        build = subprocess.run(
+            ["xcrun", "clang++", *flags] +
+            [str(ROOT / "native/network-helper" / item) for item in files] +
+            ["-o", str(binary)], capture_output=True, timeout=300)
+        if build.returncode != 0:
+            raise SystemExit(f"{name} build failed: {build.stderr.decode()[-800:]}")
+        codesign_adhoc(binary, "local.szu.securelink.executor")
+    codesign_adhoc(engine_binary, "local.szu.securelink.executor-engine")
+
+    context_path = OUT / "executor-context.json"
+    context_path.write_text(json.dumps(CONTEXT, indent=2) + "\n")
+    plan_path = OUT / "plan.json"
+    plan_path.write_text(json.dumps(PLAN, indent=2) + "\n")
+    update_plan_path = OUT / "update-plan.json"
+    update_plan_path.write_text(json.dumps(UPDATE_PLAN, indent=2) + "\n")
+    static_source = ROOT / "native" / "network-helper" / "vendor-static-routes.json"
+    static_path = OUT / "static-routes.json"
+    # The daemon consumes {"staticRoutes": ["a.b.c.d/p", ...]} canonical
+    # strings; expand netstat's truncated destinations on the way in.
+    evidence = json.loads(static_source.read_text())
+    canonical = []
+    for entry in evidence["routes"]:
+        octets = entry["address"].split(".")
+        while len(octets) < 4:
+            octets.append("0")
+        canonical.append(".".join(octets) + "/" + str(entry["prefixLength"]))
+    static_path.write_text(json.dumps({"staticRoutes": canonical}, indent=2) + "\n")
+    identity_path = OUT / "lease-identity.txt"
+    identity = str(uuid.uuid4())
+    identity_path.write_text(identity + "\n")
+
+    engine_cdhash_path = OUT / "engine-cdhash.txt"
+    engine_cdhash = cdhash_of(OUT / "executor-engine")
+    engine_cdhash_path.write_text(engine_cdhash + "\n")
+
+    receipt = {
+        "daemon": {"path": str(OUT / "executor-daemon"),
+                   "sha256": sha256_file(OUT / "executor-daemon"),
+                   "cdhash": cdhash_of(OUT / "executor-daemon")},
+        "engine": {"path": str(OUT / "executor-engine"),
+                   "sha256": sha256_file(OUT / "executor-engine"),
+                   "cdhash": engine_cdhash,
+                   "upstreamBinary": str(staged_engine),
+                   "upstreamSHA256": sha256_file(staged_engine),
+                   "shape": "merged-data-engine"},
+        "context": {"path": str(context_path), "sha256": sha256_file(context_path),
+                    "sessionID": CONTEXT["sessionID"]},
+        "plan": {"path": str(plan_path), "sha256": sha256_file(plan_path),
+                 "mode": "synthetic-plan", "ranges": ["192.0.2.0/30", "192.0.2.128/25"],
+                 "dnsDomain": "unscoped-empty-scoped-to-szu.edu.cn-by-context-fallback"},
+        "updatePlan": {"path": str(update_plan_path), "sha256": sha256_file(update_plan_path),
+                       "mode": "synthetic-push-delta", "ranges": ["203.0.113.0/24"]},
+        "staticRoutes": {"path": str(static_path), "sha256": sha256_file(static_path),
+                         "source": str(static_source), "mode": "vendor-static-policy"},
+        "leaseIdentity": identity,
+    }
+    (OUT / "receipt.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+    print(json.dumps(receipt, indent=2, sort_keys=True))
+
+
+if __name__ == "__main__":
+    sys.exit(build())

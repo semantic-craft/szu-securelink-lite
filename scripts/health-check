@@ -1,0 +1,237 @@
+#!/usr/bin/env python3
+"""Health check for the szu-securelink privileged components (unit 5).
+
+Mirrors the official client's process-anomaly repair prompt: verify every
+privileged component against its audited receipts and report stale or
+missing pieces with the exact repair command. Nothing is modified or
+repaired automatically; repair always runs the audited installer with an
+explicit administrator authorization.
+
+Components:
+  helper-daemon    /Library/PrivilegedHelperTools status daemon: file,
+                   immutable flag, launchd state (via the daemon itself),
+                   installed-receipt hash agreement.
+  executor-daemon  tunnel executor: daemon file, staged trust anchors
+                   (context, static routes, cdhash, identity), launchd
+                   state (via the status daemon), receipt hash agreement.
+  engine-binary    merged data engine: present, ad-hoc signature identifier
+                   pinned, cdhash equals the staged cdhash file (a rebuilt
+                   engine invalidates the staged hash — the official
+                   client's equivalent of the repair prompt).
+  cas-handler      securelink:// handler belongs to the official client.
+"""
+import argparse
+import datetime
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
+import helper_status  # noqa: E402
+
+HELPER_LABEL = "local.szu.securelink.helper"
+HELPER_FILE = "/Library/PrivilegedHelperTools/" + HELPER_LABEL
+EXECUTOR_LABEL = HELPER_LABEL + "-executor"
+EXECUTOR_FILE = "/Library/PrivilegedHelperTools/" + EXECUTOR_LABEL
+EXECUTOR_STAGED = {
+    "context": "/Library/PrivilegedHelperTools/" + EXECUTOR_LABEL + "-context.json",
+    "static-routes": "/Library/PrivilegedHelperTools/" + EXECUTOR_LABEL + "-static-routes.json",
+    "engine-cdhash": "/Library/PrivilegedHelperTools/" + EXECUTOR_LABEL + "-engine.cdhash",
+    "identity": "/Library/PrivilegedHelperTools/" + EXECUTOR_LABEL + "-identity",
+}
+ENGINE_IDENTIFIER = "local.szu.securelink.executor-engine"
+ENGINE_BINARY = ROOT / "out/executor-build/executor-engine"
+INSTALL_RECEIPTS = ROOT / "out/executor-install"
+HELPER_INSTALL_RECEIPT = ROOT / "out/helper-install"
+
+
+def sha256_file(path: str) -> str | None:
+    try:
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            for block in iter(lambda: handle.read(65536), b""):
+                digest.update(block)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
+def immutable(path: str) -> bool | None:
+    if not os.path.exists(path):
+        return None
+    run = subprocess.run(["/usr/bin/stat", "-f", "%Sf", path], capture_output=True, text=True, timeout=10)
+    return "uchg" in run.stdout.split()
+
+
+def latest_receipt(directory: Path, label_key: str) -> dict | None:
+    receipts = sorted(directory.glob("*.json"))
+    for path in reversed(receipts):
+        try:
+            value = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if value.get("label") == label_key or label_key == HELPER_LABEL:
+            return value
+        if label_key != HELPER_LABEL and "engineCdhash" in value:
+            return value
+    return None
+
+
+def check_helper_daemon() -> dict:
+    verdict = {"component": "helper-daemon", "state": "missing",
+               "repair": "python3 scripts/install-helper"}
+    if not os.path.isfile(HELPER_FILE):
+        return verdict
+    verdict["state"] = "present"
+    verdict["immutable"] = immutable(HELPER_FILE)
+    try:
+        report = helper_status.query()
+        state = report.get("services", {}).get(HELPER_LABEL, {}).get("state")
+        verdict["launchd"] = state
+        if state == "loaded":
+            verdict["state"] = "healthy"
+    except (OSError, ValueError) as error:
+        verdict["launchdError"] = f"{type(error).__name__}"
+    receipt = None
+    for path in sorted(HELPER_INSTALL_RECEIPT.glob("install-*.json"), reverse=True):
+        try:
+            value = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if value.get("label") == HELPER_LABEL:
+            receipt = value
+            break
+    if receipt:
+        current = sha256_file(HELPER_FILE)
+        expected = receipt.get("binarySha256") or receipt.get("helperSha256")
+        verdict["hashMatchesReceipt"] = current == expected
+        if verdict["hashMatchesReceipt"] and verdict["state"] == "healthy" and verdict.get("immutable") is True:
+            verdict["state"] = "healthy"
+        elif verdict["hashMatchesReceipt"] is False:
+            verdict["state"] = "stale"
+            verdict["repair"] = "python3 scripts/install-helper (re-stage via its audited installer)"
+    return verdict
+
+
+def check_executor_daemon() -> dict:
+    verdict = {"component": "executor-daemon", "state": "missing",
+               "repair": "python3 scripts/install-executor --replace"}
+    if not os.path.isfile(EXECUTOR_FILE):
+        return verdict
+    verdict["state"] = "present"
+    verdict["immutable"] = immutable(EXECUTOR_FILE)
+    staged = {name: (os.path.isfile(path), sha256_file(path)) for name, path in EXECUTOR_STAGED.items()}
+    verdict["stagedFiles"] = {name: {"present": ok} for name, (ok, _) in staged.items()}
+    missing_staged = [name for name, (ok, _) in staged.items() if not ok]
+    if missing_staged:
+        verdict["state"] = "stale"
+        verdict["missingStagedFiles"] = missing_staged
+        return verdict
+    try:
+        report = helper_status.query()
+        state = report.get("services", {}).get(EXECUTOR_LABEL, {}).get("state")
+        verdict["launchd"] = state
+    except (OSError, ValueError) as error:
+        verdict["launchdError"] = f"{type(error).__name__}"
+    receipt = None
+    for path in sorted(INSTALL_RECEIPTS.glob("install-*.json"), reverse=True):
+        try:
+            value = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if value.get("daemonSha256"):
+            receipt = value
+            break
+    current = sha256_file(EXECUTOR_FILE)
+    if receipt and current != receipt.get("daemonSha256"):
+        verdict["state"] = "stale"
+        verdict["repair"] = "python3 scripts/install-executor --replace"
+        return verdict
+    if verdict.get("launchd") != "loaded" and verdict.get("launchdError") is None:
+        # Socket-activated: loaded is normal; anything else means launchd lost it.
+        verdict["state"] = "stale"
+        verdict["repair"] = "python3 scripts/install-executor --replace"
+        return verdict
+    verdict["state"] = "healthy"
+    return verdict
+
+
+def check_engine_binary() -> dict:
+    verdict = {"component": "engine-binary", "state": "missing",
+               "repair": "python3 scripts/build-executor && python3 scripts/install-executor --replace"}
+    if not ENGINE_BINARY.is_file():
+        return verdict
+    verdict["state"] = "present"
+    run = subprocess.run(["/usr/bin/codesign", "-dvvv", str(ENGINE_BINARY)],
+                         capture_output=True, text=True, timeout=30)
+    identifier = None
+    cdhash = None
+    for line in (run.stdout + run.stderr).splitlines():
+        if line.strip().startswith("Identifier="):
+            identifier = line.split("=", 1)[1].strip()
+        if line.strip().startswith("CDHash="):
+            cdhash = line.split("=", 1)[1].strip()
+    verdict["identifier"] = identifier
+    verdict["cdhash"] = cdhash
+    if identifier != ENGINE_IDENTIFIER:
+        verdict["state"] = "stale"
+        verdict["repair"] = "python3 scripts/build-executor && python3 scripts/install-executor --replace"
+        return verdict
+    staged_path = EXECUTOR_STAGED["engine-cdhash"]
+    staged = None
+    try:
+        staged = Path(staged_path).read_text().strip()
+    except OSError:
+        pass
+    verdict["stagedCdhash"] = staged
+    if not staged:
+        verdict["state"] = "stale"
+        verdict["repair"] = "python3 scripts/install-executor --replace"
+    elif staged == cdhash:
+        verdict["state"] = "healthy"
+    else:
+        # The rebuilt engine invalidates the staged hash — exactly the
+        # official client's repair-prompt condition.
+        verdict["state"] = "stale"
+        verdict["repair"] = "python3 scripts/install-executor --replace"
+    return verdict
+
+
+def check_cas_handler() -> dict:
+    verdict = {"component": "cas-handler"}
+    try:
+        lsreg = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+        dump = subprocess.run([lsreg, "-dump"], capture_output=True, text=True, timeout=20).stdout
+        state = "local.szu.securelink.preview" if "all roles:                  local.szu.securelink.preview" in dump or "claimed schemes:            securelink:" in dump else "unknown"
+        verdict["handler"] = state
+        verdict["state"] = "healthy" if state in ("local.szu.securelink.preview", "com.wangsu.securelink") else "changed"
+        if verdict["state"] != "healthy":
+            verdict["repair"] = "./scripts/build-app '/Applications/荔连.app'"
+    except (OSError, subprocess.SubprocessError) as error:
+        verdict["state"] = "unknown"
+        verdict["error"] = f"{type(error).__name__}"
+    return verdict
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.parse_args()
+    stamp = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    components = [check_helper_daemon(), check_executor_daemon(),
+                  check_engine_binary(), check_cas_handler()]
+    unhealthy = [c["component"] for c in components if c.get("state") not in ("healthy",)]
+    report = {"checkedAt": stamp, "components": components,
+              "healthy": not unhealthy, "unhealthy": unhealthy,
+              "note": "repair always requires explicit administrator authorization; "
+                      "this check never mutates state"}
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 0 if not unhealthy else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

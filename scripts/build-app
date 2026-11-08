@@ -1,0 +1,130 @@
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")/.."
+swift build -c release
+cargo build --release --bin szu-securelink
+binary_dir=$(swift build -c release --show-bin-path)
+app="${1:-out/SZU SecureLink.app}"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/zh_CN.lproj" "$app/Contents/Resources/en.lproj"
+case "$app" in
+    *CAS-diagnostic.app)
+        cp "$binary_dir/szu-securelink" "$app/Contents/MacOS/szu-securelink"
+        ;;
+    *)
+        cp "target/release/szu-securelink" "$app/Contents/MacOS/szu-securelink"
+        cp "$binary_dir/szu-securelink" "$app/Contents/MacOS/szu-securelink-diagnostic"
+        if [ -x out/executor-build/executor-engine ]; then
+            cp -p out/executor-build/executor-engine "$app/Contents/MacOS/executor-engine"
+        elif [ -x out/openvpn3/build/szu-openvpn3-data-engine ]; then
+            cp -p out/openvpn3/build/szu-openvpn3-data-engine "$app/Contents/MacOS/szu-openvpn3-data-engine"
+        fi
+        ;;
+esac
+if [ -f out/initial-analysis/vendor-public-key.der ]; then
+    cp out/initial-analysis/vendor-public-key.der "$app/Contents/Resources/vendor-public-key.der"
+fi
+icon_src=""
+if [ -f assets/app-icon.png ]; then
+    icon_src="assets/app-icon.png"
+    cp assets/app-icon.png "$app/Contents/Resources/AppIcon.png"
+elif [ -f assets/app-icon.svg ]; then
+    icon_src="assets/app-icon.svg"
+fi
+if [ -f assets/app-icon.svg ]; then
+    cp assets/app-icon.svg "$app/Contents/Resources/AppIcon.svg"
+fi
+for mb in menubar-connected menubar-disconnected menubar-connecting; do
+    if [ -f "assets/${mb}.svg" ]; then
+        cp "assets/${mb}.svg" "$app/Contents/Resources/${mb}.svg"
+    fi
+done
+if [ -n "$icon_src" ]; then
+    python3 - "$icon_src" "$app/Contents/Resources/AppIcon.icns" <<'PYICON'
+import subprocess, sys, tempfile
+from pathlib import Path
+
+svg_path, icns_out = sys.argv[1], sys.argv[2]
+with tempfile.TemporaryDirectory() as tmp:
+    iconset = Path(tmp) / "AppIcon.iconset"
+    iconset.mkdir()
+    swift_code = """
+import AppKit
+let args = CommandLine.arguments
+guard let img = NSImage(contentsOfFile: args[1]) else { exit(1) }
+let specs: [(String, Int)] = [
+    ("icon_16x16.png", 16), ("icon_16x16@2x.png", 32),
+    ("icon_32x32.png", 32), ("icon_32x32@2x.png", 64),
+    ("icon_128x128.png", 128), ("icon_128x128@2x.png", 256),
+    ("icon_256x256.png", 256), ("icon_256x256@2x.png", 512),
+    ("icon_512x512.png", 512), ("icon_512x512@2x.png", 1024),
+]
+for (name, px) in specs {
+    let rep = NSBitmapImageRep(
+        bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px,
+        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+        colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+    )!
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+    img.draw(in: NSRect(x: 0, y: 0, width: px, height: px))
+    NSGraphicsContext.restoreGraphicsState()
+    let data = rep.representation(using: .png, properties: [:])!
+    try! data.write(to: URL(fileURLWithPath: args[2]).appendingPathComponent(name))
+}
+"""
+    script = Path(tmp) / "gen.swift"
+    script.write_text(swift_code)
+    subprocess.run(["swift", str(script), svg_path, str(iconset)], check=True)
+    subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o", icns_out], check=True)
+PYICON
+fi
+cat > "$app/Contents/Resources/zh_CN.lproj/InfoPlist.strings" <<'EOF'
+"CFBundleDisplayName" = "荔连";
+"CFBundleName" = "荔连";
+EOF
+cat > "$app/Contents/Resources/en.lproj/InfoPlist.strings" <<'EOF'
+"CFBundleDisplayName" = "荔连 (SZU SecureLink)";
+"CFBundleName" = "荔连";
+EOF
+python3 - "$app/Contents/Info.plist" "$app" <<'PYINFO'
+import plistlib,sys
+info = {
+    'CFBundleExecutable':'szu-securelink',
+    'CFBundleIdentifier':'local.szu.securelink.preview',
+    'CFBundleName':'荔连',
+    'CFBundleDisplayName':'荔连',
+    'CFBundleDevelopmentRegion':'zh_CN',
+    'CFBundleLocalizations':['zh_CN','en'],
+    'CFBundleIconFile':'AppIcon',
+    'CFBundleIconName':'AppIcon',
+    'CFBundlePackageType':'APPL',
+    'CFBundleVersion':'1',
+    'CFBundleShortVersionString':'0.2.0',
+    'NSHumanReadableCopyright':'张贤伟 · 深圳大学法律人工智能实训实验室',
+    'LSMinimumSystemVersion':'13.0',
+    'NSHighResolutionCapable':True,
+    'SUFeedURL':'https://securelink.szu.edu.cn/updates/appcast.xml',
+    'SUPublicEDKey':'MCowBQYDK2VwAyEAszuSecureLinkEd25519PubKey01=',
+    'SUEnableAutomaticChecks':True,
+}
+if not sys.argv[2].endswith('CAS-diagnostic.app'):
+    info['CFBundleURLTypes'] = [{'CFBundleURLName':'荔连 · SZU SecureLink Zero Trust','CFBundleURLSchemes':['securelink']}]
+with open(sys.argv[1], 'wb') as f:
+    plistlib.dump(info, f)
+PYINFO
+SIGN_ID="${CODESIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | sed -nE 's/.*"(Developer ID Application: [^"]+)".*/\1/p' | head -n 1)}"
+if [ -n "$SIGN_ID" ]; then
+    if [ -x "$app/Contents/MacOS/executor-engine" ]; then
+        codesign --force --options runtime --timestamp --identifier local.szu.securelink.executor-engine --sign "$SIGN_ID" "$app/Contents/MacOS/executor-engine"
+    fi
+    if [ -x "$app/Contents/MacOS/szu-securelink-diagnostic" ]; then
+        codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$app/Contents/MacOS/szu-securelink-diagnostic"
+    fi
+    codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$app"
+else
+    if [ -x "$app/Contents/MacOS/szu-securelink-diagnostic" ]; then
+        codesign --force --sign - "$app/Contents/MacOS/szu-securelink-diagnostic" >/dev/null 2>&1 || true
+    fi
+    codesign --force --sign - "$app" >/dev/null 2>&1 || true
+fi
+printf '%s\n' "$app"

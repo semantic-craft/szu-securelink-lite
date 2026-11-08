@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""Verify compiled call edges in the investigated backend version, without execution."""
+import argparse
+import hashlib
+import json
+from pathlib import Path
+import struct
+
+
+TARGETS = {
+    'SecureLink_Core': {
+        'sha256': '5f22f1680a6e2ad20d93550fd4213e9392bd34eacb1ae70e40666e10aef4af40',
+        'calls': [(0x1001392c8, 0x10000858c, 'OMI connection thread -> OpenVPNClient.connect')],
+    },
+    'SecureLink_Agent': {
+        'sha256': 'aea6e2d38e7d99476357a4a9b95c1c2eab90321c7ef49874d549be3e6fd8196b',
+        'calls': [(0x1007fee0c, 0x10066ede0, 'mod_vpn.Start -> openvpn3.NewSession'),
+                  (0x1007fee90, 0x10066f030, 'mod_vpn.Start -> Session.Start')],
+    },
+}
+
+
+def file_offset(data, address):
+    if struct.unpack_from('<I', data)[0] != 0xfeedfacf:
+        raise ValueError('expected thin 64-bit Mach-O')
+    offset = 32
+    for _ in range(struct.unpack_from('<I', data, 16)[0]):
+        command, size = struct.unpack_from('<II', data, offset)
+        if command == 0x19:
+            vm, _, start, length = struct.unpack_from('<QQQQ', data, offset + 24)
+            if vm <= address < vm + length:
+                return start + address - vm
+        offset += size
+    raise ValueError('address is not backed by file bytes')
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--app', type=Path, required=True, help='Installed official app to inspect; never launched')
+    args = parser.parse_args()
+    directory = args.app / 'Contents/Resources/app.asar.unpacked/assets/app-ext/securelink_mac/plugin/bin'
+    results = []
+    for name, target in TARGETS.items():
+        data = (directory / name).read_bytes()
+        digest = hashlib.sha256(data).hexdigest()
+        if digest != target['sha256']:
+            raise ValueError(name + ': different binary; investigate before accepting old addresses')
+        for site, expected, meaning in target['calls']:
+            instruction = struct.unpack_from('<I', data, file_offset(data, site))[0]
+            if instruction & 0xfc000000 != 0x94000000:
+                raise ValueError(name + ': expected ARM64 BL')
+            immediate = instruction & 0x03ffffff
+            if immediate & 0x02000000:
+                immediate -= 0x04000000
+            if site + immediate * 4 != expected:
+                raise ValueError(name + ': call target differs')
+            results.append({'binary': name, 'sha256': digest, 'site': hex(site),
+                            'target': hex(expected), 'meaning': meaning})
+    print(json.dumps({'result': 'PASS', 'layer': 'static-compiled-calls',
+                      'currentSchoolTunnelPathVerified': False,
+                      'standaloneReplacementVerified': False, 'calls': results}, indent=2))
+
+
+if __name__ == '__main__':
+    main()
