@@ -219,7 +219,7 @@ impl TunnelActor {
             let mut active_child: Option<Child> = None;
             let mut active_stdin: Option<ChildStdin> = None;
 
-            if let Some(notice) = probe_live_campus_utun() {
+            if let Some(notice) = probe_connecting_campus_utun() {
                 generation = GenerationId(1);
                 state = ActorTunnelState::Connected(notice.clone());
                 let _ = evt_tx.try_send(SessionEvent::TunnelActive { generation, notice });
@@ -334,7 +334,7 @@ fn run_auto_repair(
     let phase = "正在自动修复：检测隧道接口、清理残留进程与重置协议注册…".to_string();
     let _ = evt_tx.try_send(SessionEvent::ConnectingPhase { generation, phase });
     let _ = Command::new("/usr/bin/dscacheutil").arg("-flushcache").status();
-    if let Some(notice) = probe_live_campus_utun() {
+    if let Some(notice) = probe_connecting_campus_utun() {
         *state = ActorTunnelState::Connected(notice.clone());
         let _ = evt_tx.try_send(SessionEvent::TunnelActive { generation, notice });
         return;
@@ -345,7 +345,7 @@ fn run_auto_repair(
 }
 
 fn start_connection(config: &TunnelConfig, generation: GenerationId, active_child: &mut Option<Child>, active_stdin: &mut Option<ChildStdin>, state: &mut ActorTunnelState, evt_tx: &Sender<SessionEvent>, cmd_tx: &Sender<SessionCommand>) {
-    if let Some(notice) = probe_live_campus_utun() {
+    if let Some(notice) = probe_connecting_campus_utun() {
         *state = ActorTunnelState::Connected(notice.clone());
         let _ = evt_tx.try_send(SessionEvent::TunnelActive { generation, notice });
         return;

@@ -5,17 +5,17 @@
   <p>A clean, native macOS zero-trust campus network client for Shenzhen University</p>
 
   <p>
-    <a href="https://github.com/semantic-craft/szu-securelink-lite/releases/download/v0.2.0/SZU-SecureLink-v0.2.0-macOS-arm64.zip">
-      <img src="https://img.shields.io/badge/⬇_立即下载_荔连_v0.2.0-macOS_Apple_Silicon_(8.8_MB)-8C2232?style=for-the-badge" alt="Download 荔连 v0.2.0 for macOS" />
+    <a href="https://github.com/semantic-craft/szu-securelink-lite/releases/download/v0.2.1/SZU-SecureLink-v0.2.1-macOS-arm64.zip">
+      <img src="https://img.shields.io/badge/⬇_立即下载_荔连_v0.2.1-macOS_Apple_Silicon_(8.9_MB)-8C2232?style=for-the-badge" alt="Download 荔连 v0.2.1 for macOS" />
     </a>
     &nbsp;
-    <a href="https://github.com/semantic-craft/szu-securelink-lite/releases/tag/v0.2.0">
-      <img src="https://img.shields.io/badge/GitHub_Release-v0.2.0-2B2118?style=for-the-badge&logo=github" alt="GitHub Release v0.2.0" />
+    <a href="https://github.com/semantic-craft/szu-securelink-lite/releases/tag/v0.2.1">
+      <img src="https://img.shields.io/badge/GitHub_Release-v0.2.1-2B2118?style=for-the-badge&logo=github" alt="GitHub Release v0.2.1" />
     </a>
   </p>
 
   <p>
-    <a href="#立即下载与安装">中文说明</a> · <a href="#english">English</a> · <a href="https://github.com/semantic-craft/szu-securelink-lite/releases/download/v0.2.0/SZU-SecureLink-v0.2.0-macOS-arm64.zip">直接下载 ZIP</a> · <a href="NOTES.md">实测记录</a>
+    <a href="#立即下载与安装">中文说明</a> · <a href="#english">English</a> · <a href="https://github.com/semantic-craft/szu-securelink-lite/releases/download/v0.2.1/SZU-SecureLink-v0.2.1-macOS-arm64.zip">直接下载 ZIP</a> · <a href="NOTES.md">实测记录</a>
   </p>
 </div>
 
@@ -25,9 +25,9 @@
 
 > **直接下载安装包（macOS 13.0+ Apple Silicon，已通过 Apple Developer ID 签名与公证）**
 >
-> - **直接下载（ZIP，8.85 MiB）**：[SZU-SecureLink-v0.2.0-macOS-arm64.zip](https://github.com/semantic-craft/szu-securelink-lite/releases/download/v0.2.0/SZU-SecureLink-v0.2.0-macOS-arm64.zip)
-> - **版本发布页**：[GitHub Releases · v0.2.0](https://github.com/semantic-craft/szu-securelink-lite/releases/tag/v0.2.0)
-> - **SHA-256 校验值**：`44e664fc4644b2ada6e8f2cc26f5668126aaa7275a9c5f9512c35ef0f3e9089c`
+> - **直接下载（ZIP，8.9 MiB）**：[SZU-SecureLink-v0.2.1-macOS-arm64.zip](https://github.com/semantic-craft/szu-securelink-lite/releases/download/v0.2.1/SZU-SecureLink-v0.2.1-macOS-arm64.zip)
+> - **版本发布页**：[GitHub Releases · v0.2.1](https://github.com/semantic-craft/szu-securelink-lite/releases/tag/v0.2.1)
+> - **SHA-256 校验值**：`5224a0fc2ba4273d65da8128b2e9379aeba971f1b4341bd11443e9ea3cd807d2`
 
 解压后将 **`荔连.app`** 拖入 `/Applications`（应用程序）文件夹，双击即可直接打开使用。
 
@@ -80,9 +80,9 @@
 
 ### Download for macOS
 
-- **Direct Download (macOS 13.0+ Apple Silicon, Notarized, 8.85 MiB)**: [SZU-SecureLink-v0.2.0-macOS-arm64.zip](https://github.com/semantic-craft/szu-securelink-lite/releases/download/v0.2.0/SZU-SecureLink-v0.2.0-macOS-arm64.zip)
-- **Release Page**: [GitHub Releases · v0.2.0](https://github.com/semantic-craft/szu-securelink-lite/releases/tag/v0.2.0)
-- **SHA-256**: `44e664fc4644b2ada6e8f2cc26f5668126aaa7275a9c5f9512c35ef0f3e9089c`
+- **Direct Download (macOS 13.0+ Apple Silicon, Notarized, 8.9 MiB)**: [SZU-SecureLink-v0.2.1-macOS-arm64.zip](https://github.com/semantic-craft/szu-securelink-lite/releases/download/v0.2.1/SZU-SecureLink-v0.2.1-macOS-arm64.zip)
+- **Release Page**: [GitHub Releases · v0.2.1](https://github.com/semantic-craft/szu-securelink-lite/releases/tag/v0.2.1)
+- **SHA-256**: `5224a0fc2ba4273d65da8128b2e9379aeba971f1b4341bd11443e9ea3cd807d2`
 
 Unzip the archive, drag **`荔连.app`** into `/Applications`, and double-click to launch (signed with Apple Developer ID and notarized).
 

@@ -7,6 +7,7 @@
 
 extern crate gpui_kit as gpui;
 
+pub mod agent_control;
 pub mod confusion;
 pub mod ctrl;
 pub mod dns;

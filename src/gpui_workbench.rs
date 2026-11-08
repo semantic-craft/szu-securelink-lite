@@ -16,7 +16,7 @@ pub const APP_CHINESE_NAME: &str = "荔连";
 pub const ABOUT_ATTRIBUTION_TEXT: &str = "深圳大学法律人工智能实训实验室";
 
 /// Application version string displayed in the About page and update check.
-pub const APP_VERSION: &str = "0.2.0";
+pub const APP_VERSION: &str = "0.2.1";
 
 /// Default 4 user-pinned campus services in the macOS menu bar popover.
 pub const DEFAULT_MENU_BAR_PIN_IDS: [&str; 4] = [
