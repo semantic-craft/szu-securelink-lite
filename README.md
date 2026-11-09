@@ -69,8 +69,7 @@
 
 ## 文档导航
 
-- [当前状态与实测记录](NOTES.md) · [技术架构与实证记录](docs/design.md)
-- [后台协议契约](docs/backend-contract.md) · [待办工单与验收标准](docs/backlog.md) · [项目教训](lessons.md)
+- [当前状态与实测记录](NOTES.md) · [技术架构与实证记录](docs/design.md) · [项目教训](lessons.md)
 
 ---
 

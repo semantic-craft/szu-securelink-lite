@@ -2,7 +2,7 @@
 
 先读 [NOTES.md](NOTES.md)、[README.md](README.md)、[lessons.md](lessons.md)。
 
-- 当前技术证据和决策在 `docs/design.md`；未完成工单在 `docs/backlog.md`。
+- 当前技术证据、架构决策与实机验收标准在 `docs/design.md`。
 - `scripts/baseline.py` 为只读诊断入口；`scripts/check` 为离线验证入口。
 - 静态分析原文和性能快照只放忽略的 `out/`；不要提交厂商二进制、配置、令牌或账户数据。
 - 最新用户授权允许本机有界连接/断开、启动/退出测试并尝试恢复；保留原客户端与配置，不重签名。系统安全设置、安装、协议注册和长期凭据使用仍需相应授权。

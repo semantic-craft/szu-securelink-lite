@@ -20,9 +20,13 @@
 2. **133 条路由装填期防误杀**：macOS 特权执行器顺序执行 133 次 `/sbin/route -n add` 耗时约 11.4 秒。[`src/tunnel_actor.rs`](../src/tunnel_actor.rs) 的纯函数 `step_watchdog_tick` 仅负向超时或正向探测到 `utun` 时迁移状态，严禁在路由装填窗口内误杀 `executor-engine`。
 3. **特权安装与文件安全硬化**：特权守护进程及信任锚点采用临时文件校验后 `rename` 原子替换并设置 `uchg` 不可变标志；IPC 套接字与事务日志严格限制为 `0600` 权限，构建脚本拒绝符号链接跟随（`O_NOFOLLOW`）。
 
-## 4. 验证门禁
+## 4. 验证门禁与实机验收标准
 
 在仓库根目录运行 [`./scripts/check`](../scripts/check) 即可离线执行完整验证矩阵：
 - Python 离线规划、路由验证器、特权安装器与 C++ 单元回归测试（`unittest discover -s tests`）
 - Swift 控制面与协议核心测试（`swift test` 与 `szu-securelink-probe --self-test`）
 - Safe Rust 单元测试、文档测试与 Clippy 零警告门禁（`cargo test --all-targets`、`cargo clippy --all-targets -- -D warnings`）
+
+实机校园网与业务验收标准（离线与合成测试不替代本层）：
+- **报账系统与校内办公**：官方 `SecureLink.app` 及后台守护进程全部退出，仅运行「荔连」（可与本机另一款联网软件共存），点击进入报账系统、办事大厅、内部网与 OA 完成校内单点登录并加载业务模块（只读核验）。
+- **中外文学术数据库**：在不登录个人账号的前提下，从工作台访问中国知网、HeinOnline、Oxford Scholarship、Cambridge Core、北大法宝、Web of Science、Westlaw，页面显示机构归属为 **深圳大学（Shenzhen University）**；断开隧道后本机路由表与 `scutil --dns` 完整复原。

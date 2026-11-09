@@ -33,15 +33,15 @@
 - 验证点：运行 `cargo test --offline test_beginner_auto_connect_tray_pins_and_sparkle` 与 `cargo clippy --offline --all-targets -- -D warnings`，核对 `wc -l src/*.rs` 所有文件不超过 400 行。
 - 复发记录：Seen 2x（2026-11-07 17:42、2026-11-07 18:49，均在 CAS 回跳后卡在「正在建立零信任网络隧道」）。
 
-### macOS 26/27 状态栏图标（`NSStatusItem`）必须由 `.app` 主进程直接挂载，且 GPUI Flexbox 双栏必须声明 `min_w_0()` 防横向裁切
+### macOS 26/27 状态栏图标（`NSStatusItem`）必须由 `.app` 主进程直接挂载，且桌面界面应采用原生 AppKit 控件与 `?` 气泡分离静态说明
 
-**在 macOS 26/27 中必须在 `CFBundleExecutable` 主进程内通过 `tray-icon` 直接挂载 `NSStatusItem`，且 GPUI `flex_1()` 栏必须显式加 `.w_full().min_w_0().overflow_hidden()` 防止 `min-content` 撑破窗口右边界。**
+**在 macOS 26/27 中必须在 `CFBundleExecutable` 主进程内通过 `tray-icon` 直接挂载 `NSStatusItem`，桌面设置与工作台采用原生 AppKit（`NSWindow` + `SettingsInfoTipButton`）将静态说明收进 `?` 气泡、行内副标题仅展示实时状态。**
 
 - 标签：#UI #状态栏 #验收
-- 起因与后果：① 初版菜单栏图标由 `Contents/MacOS/szu-securelink-diagnostic --menubar-agent` 辅助子进程创建，macOS 26/27 的 `MenuBarAgent` 仅渲染 `.app` 主可执行文件创建的 `NSStatusItem`，导致用户看不到右上角状态栏图标；② 独立设置页右栏 `flex_1()` 未加 `min_w_0()`，底层 `taffy` 引擎按单行长文本固有最小宽度（`min-content`）撑破 740px 窗口右边界，造成按钮与说明文字被视口裁切。
-- 修复与证据：[`src/tray_bridge.rs`](src/tray_bridge.rs) 改用 `tray-icon` 在 `szu-securelink` 主线程同进程挂载 36×36 `@2x` 模板图标与 `NSMenu`；[`src/gpui_window.rs`](src/gpui_window.rs) 的 `render_settings_body` 为双栏及全部子行补齐 `.w_full().min_w_0().overflow_hidden()`，经 `screencapture` 实机窗口截图验证零溢出。
-- 正确做法（Done right）：macOS 菜单栏状态项一律在主进程主线程挂载并通过 `System Events` -> `menu bar 2` 实测核验；GPUI 弹性双栏布局一律显式声明 `min_w_0()` 并截屏核对右边界。
-- 验证点：运行 `./scripts/check` 与 `osascript -e 'tell application "System Events" to tell process "szu-securelink" to get properties of menu bar item 1 of menu bar 2'`。
+- 起因与后果：① 初版菜单栏图标由辅助子进程创建，macOS 26/27 的 `MenuBarAgent` 仅渲染 `.app` 主可执行文件创建的 `NSStatusItem`，导致用户看不到右上角状态栏图标；② 自绘画布缺少 macOS 原生无障碍树与动态语义色，且把长篇静态解释直接堆在设置行内导致横向拥挤。
+- 修复与证据：[`src/tray_bridge.rs`](src/tray_bridge.rs) 改用 `tray-icon` 在 `szu-securelink` 主线程同进程挂载 36×36 `@2x` 模板图标与 `NSMenu`；[`src/host_api.rs`](src/host_api.rs) 与 [`platforms/macos/src/SecureLinkNativeApp.mm`](platforms/macos/src/SecureLinkNativeApp.mm) 对齐 `msime` 架构，采用原生 AppKit 控件与 `SettingsInfoTipButton` `?` 气泡说明。
+- 正确做法（Done right）：macOS 菜单栏状态项一律在主进程主线程挂载；静态配置行的 `inline_detail` 保持 `None`，通过单元测试 [`host_api_enforces_info_tip_separation_and_c_abi_roundtrip`](src/host_api.rs) 强制校验。
+- 验证点：运行 `./scripts/check` 与 `cua-driver get_window_state` 核对原生 `AXWindow` 及 `AXMenuBarItem`。
 - 复发记录：Seen 1x（2026-11-08）。
 
 ### 验收入口必须先向用户核对真实工作流（协议推断不能替代）
@@ -64,11 +64,11 @@
 
 - 起因与后果：静态消费端把 userInfoCompletion 按真假处理，初版自行收紧为 Bool；真实 szu 应答为数字，导致合法 CAS 回跳停在 unsupported-response。
 - 正确做法：将消费语义和服务实际类型分开记录；未知类型停止，通过仅含固定名称/类型的诊断定位，不落盘原始认证响应。整数非零仍走补资料/拒绝分支，不因兼容修复跳过检查。
-- 验证：CASPreAuthenticationTests 的数字与拒绝分支，AuthenticationReplyShapeTests 的隐私回归；本轮真实 initialized/connected 回执见 docs/live-testing.md。Seen 1x（2026-11-04）。
+- 验证：`CASPreAuthenticationTests` 的数字与拒绝分支，`AuthenticationReplyShapeTests` 的隐私回归。Seen 1x（2026-11-04）。
 
 
 ### 按传输分派后的数据形态核对契约
 
 - 起因：官方接收层递归 parseJson，把 content 内的 JSON 字符串展开后才交给安全检查 handler；原生只参照 handler 的对象访问，导致真实安全结果被显示为 unknown。
 - 修复：在已确认的 content/clientMessage 字段支持对象或一层 JSON 字符串，保留严格标量和错误检查；未知不默认健康，明确 enable=0 单独显示未启用。
-- 验证：PolicyObservationTests 包装/直传等价、错误与未知回归；本轮真实 notRequired 证据见 docs/live-testing.md。Seen 1x（2026-11-04）。
+- 验证：`PolicyObservationTests` 包装/直传等价、错误与未知回归。Seen 1x（2026-11-04）。
