@@ -1,8 +1,11 @@
+[workspace]
+members = [".", "crates/host-macos"]
+
 [package]
 name = "szu-securelink-rs"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
-description = "Pure-Rust Zero-Trust tunnel core and GPUI-Kit desktop client for SZU SecureLink"
+description = "Pure-Rust Zero-Trust tunnel core and native macOS AppKit host for SZU SecureLink"
 license = "MIT"
 default-run = "szu-securelink"
 
@@ -15,6 +18,6 @@ name = "szu-securelink"
 path = "src/main.rs"
 
 [dependencies]
-gpui-kit = "0.9.0"
 serde_json = "1.0"
+szu-host-macos = { path = "crates/host-macos" }
 tray-icon = "0.26.1"

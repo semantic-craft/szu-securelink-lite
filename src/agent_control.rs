@@ -5,7 +5,7 @@ mod inner {
 use crate::gpui_workbench::WorkbenchViewModel;
 use crate::shortcuts::{default_shortcuts, valid_url};
 use crate::tunnel_actor::{probe_connecting_campus_utun, validate_securelink_callback_url, SessionCommand, SessionEvent, TunnelActor, TunnelConfig, TunnelHandle};
-use gpui_kit::base::async_util::{self, Receiver};
+use crate::async_util::{self, Receiver};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;

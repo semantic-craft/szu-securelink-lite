@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use gpui_kit::base::async_util;
+use szu_securelink_rs::async_util;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::{AtomicUsize, Ordering};

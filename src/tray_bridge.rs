@@ -6,24 +6,20 @@
 
 #![forbid(unsafe_code)]
 
+use crate::async_util::Sender;
 use crate::gpui_workbench::{ConnectionStatus, UiLocale, UiScheme, WorkbenchViewModel};
 use crate::tunnel_actor::SessionEvent;
-use gpui_kit::base::async_util::Sender;
 use std::cell::RefCell;
-use std::env;
-use std::fs;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::{env, fs};
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 const LAUNCH_AGENT_LABEL: &str = "local.szu.securelink.login";
 const DEFAULT_APP_EXEC: &str = "/Applications/荔连.app/Contents/MacOS/szu-securelink";
 
-/// Validated macOS shell visibility states for `荔连.app`.
-///
-/// At least one entry point (Dock or Menu Bar) is always visible so the user can never
-/// strand the application in an unreachable background state.
+/// Validated macOS shell visibility states for `荔连.app` (at least one entry point is always visible).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ShellPresence {
     /// Both the macOS Dock icon and the top-right Menu Bar status icon are visible.
@@ -52,9 +48,8 @@ impl ShellPresence {
     #[must_use]
     pub const fn toggle_dock(self) -> Self {
         match self {
-            Self::DockAndMenuBar => Self::MenuBarOnly,
+            Self::DockAndMenuBar | Self::DockOnly => Self::MenuBarOnly,
             Self::MenuBarOnly => Self::DockAndMenuBar,
-            Self::DockOnly => Self::MenuBarOnly,
         }
     }
 
@@ -62,9 +57,8 @@ impl ShellPresence {
     #[must_use]
     pub const fn toggle_menu_bar(self) -> Self {
         match self {
-            Self::DockAndMenuBar => Self::DockOnly,
+            Self::DockAndMenuBar | Self::MenuBarOnly => Self::DockOnly,
             Self::DockOnly => Self::DockAndMenuBar,
-            Self::MenuBarOnly => Self::DockOnly,
         }
     }
 
@@ -89,14 +83,7 @@ impl ShellPresence {
     }
 
     fn config_path() -> Option<PathBuf> {
-        let home = env::var_os("HOME")?;
-        Some(
-            PathBuf::from(home)
-                .join("Library")
-                .join("Application Support")
-                .join("szu-securelink")
-                .join("shell-presence.txt"),
-        )
+        Some(PathBuf::from(env::var_os("HOME")?).join("Library/Application Support/szu-securelink/shell-presence.txt"))
     }
 
     /// Loads the user's persisted [`ShellPresence`] from `~/Library/Application Support/szu-securelink/shell-presence.txt`.
@@ -121,65 +108,39 @@ impl ShellPresence {
 /// Persisted low-frequency user preferences managed in the Settings view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AppPreferences {
-    /// macOS Dock & Menu Bar visibility mode.
     pub shell_presence: ShellPresence,
-    /// Whether `~/Library/LaunchAgents/local.szu.securelink.login.plist` is installed.
     pub launch_at_login: bool,
-    /// Whether Sparkle checks for updates automatically.
     pub auto_check_updates: bool,
-    /// Preferred UI language.
     pub locale: UiLocale,
-    /// Preferred traditional Chinese accent theme.
     pub scheme: UiScheme,
 }
 
 impl Default for AppPreferences {
     fn default() -> Self {
-        Self {
-            shell_presence: ShellPresence::DockAndMenuBar,
-            launch_at_login: false,
-            auto_check_updates: true,
-            locale: UiLocale::ZhCn,
-            scheme: UiScheme::CrimsonSplit,
-        }
+        Self { shell_presence: ShellPresence::DockAndMenuBar, launch_at_login: false, auto_check_updates: true, locale: UiLocale::ZhCn, scheme: UiScheme::CrimsonSplit }
     }
 }
 
 impl AppPreferences {
     fn prefs_path() -> Option<PathBuf> {
-        let home = env::var_os("HOME")?;
-        Some(
-            PathBuf::from(home)
-                .join("Library")
-                .join("Application Support")
-                .join("szu-securelink")
-                .join("preferences.txt"),
-        )
+        Some(PathBuf::from(env::var_os("HOME")?).join("Library/Application Support/szu-securelink/preferences.txt"))
     }
 
     /// Parses [`AppPreferences`] from key-value lines (`key=value`).
     #[must_use]
     pub fn parse_lines(raw: &str, default_presence: ShellPresence, login_agent_exists: bool) -> Self {
-        let mut prefs = Self {
-            shell_presence: default_presence,
-            launch_at_login: login_agent_exists,
-            ..Self::default()
-        };
+        let mut prefs = Self { shell_presence: default_presence, launch_at_login: login_agent_exists, ..Self::default() };
         for line in raw.lines() {
             if let Some((k, v)) = line.trim().split_once('=') {
                 match k.trim() {
                     "shell_presence" => prefs.shell_presence = ShellPresence::from_token(v),
                     "auto_check_updates" => prefs.auto_check_updates = v.trim() != "false",
-                    "locale" => {
-                        prefs.locale = if v.trim() == "en-US" { UiLocale::EnUs } else { UiLocale::ZhCn };
-                    }
-                    "scheme" => {
-                        prefs.scheme = match v.trim() {
-                            "bamboo" => UiScheme::BambooColumn,
-                            "indigo" => UiScheme::IndigoTrayFirst,
-                            _ => UiScheme::CrimsonSplit,
-                        };
-                    }
+                    "locale" => prefs.locale = if v.trim() == "en-US" { UiLocale::EnUs } else { UiLocale::ZhCn },
+                    "scheme" => prefs.scheme = match v.trim() {
+                        "bamboo" => UiScheme::BambooColumn,
+                        "indigo" => UiScheme::IndigoTrayFirst,
+                        _ => UiScheme::CrimsonSplit,
+                    },
                     _ => {}
                 }
             }
@@ -190,10 +151,7 @@ impl AppPreferences {
     /// Serializes [`AppPreferences`] to key-value lines.
     #[must_use]
     pub fn to_lines(self) -> String {
-        let locale_str = match self.locale {
-            UiLocale::ZhCn => "zh-CN",
-            UiLocale::EnUs => "en-US",
-        };
+        let locale_str = if self.locale == UiLocale::EnUs { "en-US" } else { "zh-CN" };
         let scheme_str = match self.scheme {
             UiScheme::CrimsonSplit => "crimson",
             UiScheme::BambooColumn => "bamboo",
@@ -201,27 +159,18 @@ impl AppPreferences {
         };
         format!(
             "shell_presence={}\nlaunch_at_login={}\nauto_check_updates={}\nlocale={locale_str}\nscheme={scheme_str}\n",
-            self.shell_presence.as_token(),
-            self.launch_at_login,
-            self.auto_check_updates,
+            self.shell_presence.as_token(), self.launch_at_login, self.auto_check_updates,
         )
     }
 
     /// Loads persisted preferences from disk and reconciles `launch_at_login` with the LaunchAgent plist.
     #[must_use]
     pub fn load_persisted() -> Self {
-        let fallback_presence = ShellPresence::load_persisted();
-        let login_exists = is_launch_at_login_enabled();
-        Self::prefs_path()
-            .and_then(|p| fs::read_to_string(p).ok())
-            .map_or(
-                Self {
-                    shell_presence: fallback_presence,
-                    launch_at_login: login_exists,
-                    ..Self::default()
-                },
-                |raw| Self::parse_lines(&raw, fallback_presence, login_exists),
-            )
+        let (fallback, login_exists) = (ShellPresence::load_persisted(), is_launch_at_login_enabled());
+        Self::prefs_path().and_then(|p| fs::read_to_string(p).ok()).map_or(
+            Self { shell_presence: fallback, launch_at_login: login_exists, ..Self::default() },
+            |raw| Self::parse_lines(&raw, fallback, login_exists),
+        )
     }
 
     /// Saves preferences to `preferences.txt` and `shell-presence.txt`.
@@ -237,13 +186,7 @@ impl AppPreferences {
 }
 
 fn launch_agent_path() -> Option<PathBuf> {
-    let home = env::var_os("HOME")?;
-    Some(
-        PathBuf::from(home)
-            .join("Library")
-            .join("LaunchAgents")
-            .join(format!("{LAUNCH_AGENT_LABEL}.plist")),
-    )
+    Some(PathBuf::from(env::var_os("HOME")?).join(format!("Library/LaunchAgents/{LAUNCH_AGENT_LABEL}.plist")))
 }
 
 /// Renders the macOS `LaunchAgent` plist XML for starting `荔连.app` at user login.
@@ -252,20 +195,12 @@ pub fn launch_agent_plist_contents(exec_path: &str) -> String {
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
          <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
-         <plist version=\"1.0\">\n\
-         <dict>\n\
-             <key>Label</key>\n\
-             <string>{LAUNCH_AGENT_LABEL}</string>\n\
-             <key>ProgramArguments</key>\n\
-             <array>\n\
-                 <string>{exec_path}</string>\n\
-             </array>\n\
-             <key>RunAtLoad</key>\n\
-             <true/>\n\
-             <key>ProcessType</key>\n\
-             <string>Interactive</string>\n\
-         </dict>\n\
-         </plist>\n"
+         <plist version=\"1.0\">\n<dict>\n\
+             <key>Label</key>\n<string>{LAUNCH_AGENT_LABEL}</string>\n\
+             <key>ProgramArguments</key>\n<array>\n<string>{exec_path}</string>\n</array>\n\
+             <key>RunAtLoad</key>\n<true/>\n\
+             <key>ProcessType</key>\n<string>Interactive</string>\n\
+         </dict>\n</plist>\n"
     )
 }
 
@@ -277,9 +212,7 @@ pub fn is_launch_at_login_enabled() -> bool {
 
 /// Installs or removes `~/Library/LaunchAgents/local.szu.securelink.login.plist`.
 pub fn set_launch_at_login(enabled: bool) -> bool {
-    let Some(path) = launch_agent_path() else {
-        return false;
-    };
+    let Some(path) = launch_agent_path() else { return false };
     if enabled {
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
@@ -287,10 +220,7 @@ pub fn set_launch_at_login(enabled: bool) -> bool {
         let exec = if PathBuf::from(DEFAULT_APP_EXEC).is_file() {
             DEFAULT_APP_EXEC.to_string()
         } else {
-            env::current_exe()
-                .ok()
-                .and_then(|p| p.to_str().map(str::to_string))
-                .unwrap_or_else(|| DEFAULT_APP_EXEC.to_string())
+            env::current_exe().ok().and_then(|p| p.to_str().map(str::to_string)).unwrap_or_else(|| DEFAULT_APP_EXEC.to_string())
         };
         fs::write(&path, launch_agent_plist_contents(&exec)).is_ok()
     } else {
@@ -302,21 +232,13 @@ pub fn set_launch_at_login(enabled: bool) -> bool {
 /// User actions emitted by the top-right macOS Menu Bar dropdown.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TrayAction {
-    /// Brings the main GPUI workbench window to the front (reopening it if closed).
     ShowWindow,
-    /// Opens the main GPUI window directly to the Settings view.
     OpenSettings,
-    /// Starts or disconnects the campus Zero-Trust tunnel.
     ToggleConnect,
-    /// Triggers one-click self-repair.
     Repair,
-    /// Opens or queues a pinned campus service by shortcut ID.
     OpenPin(String),
-    /// Toggles the macOS Dock icon visibility.
     ToggleDock,
-    /// Toggles the macOS Menu Bar icon visibility.
     ToggleMenuBar,
-    /// Quits `荔连.app` and terminates all helper processes.
     Quit,
 }
 
@@ -333,10 +255,7 @@ impl TrayAction {
             "TOGGLE_DOCK" => Some(Self::ToggleDock),
             "TOGGLE_MENUBAR" => Some(Self::ToggleMenuBar),
             "QUIT" => Some(Self::Quit),
-            _ => rest
-                .strip_prefix("PIN:")
-                .filter(|id| !id.is_empty() && id.len() <= 64)
-                .map(|id| Self::OpenPin(id.to_string())),
+            _ => rest.strip_prefix("PIN:").filter(|id| !id.is_empty() && id.len() <= 64).map(|id| Self::OpenPin(id.to_string())),
         }
     }
 }
@@ -346,50 +265,36 @@ impl TrayAction {
 pub fn build_lychee_template_icon(connected: bool) -> Icon {
     let (w, h) = (36u32, 36u32);
     let mut rgba = vec![0u8; (w * h * 4) as usize];
-    let mut set_alpha = |x: i32, y: i32, a: u8| {
-        if x >= 0 && x < w as i32 && y >= 0 && y < h as i32 {
-            let idx = ((y as u32 * w + x as u32) * 4) as usize;
-            if a > rgba[idx + 3] {
-                rgba[idx + 3] = a;
-            }
-        }
-    };
     for y in 0..h as i32 {
         for x in 0..w as i32 {
-            let fx = x as f32 + 0.5;
-            let fy = y as f32 + 0.5;
-            let dx = (fx - 18.0) / 11.5;
-            let dy = (fy - 17.5) / 8.8;
+            let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
+            let (dx, dy) = ((fx - 18.0) / 11.5, (fy - 17.5) / 8.8);
             let dome = dx * dx + dy * dy;
             let ear_l = ((fx - 9.8).powi(2) + (fy - 11.2).powi(2)).sqrt();
             let ear_r = ((fx - 26.2).powi(2) + (fy - 11.2).powi(2)).sqrt();
             let inside_head = (fy <= 24.5 && dome <= 1.0) || ear_l <= 3.6 || ear_r <= 3.6;
             let eye_l = ((fx - 14.0).powi(2) + (fy - 18.5).powi(2)).sqrt();
             let eye_r = ((fx - 22.0).powi(2) + (fy - 18.5).powi(2)).sqrt();
-            if connected {
-                if inside_head && eye_l > 2.2 && eye_r > 2.2 {
-                    set_alpha(x, y, 255);
-                }
+            let head_hit = if connected {
+                inside_head && eye_l > 2.2 && eye_r > 2.2
             } else {
                 let on_border = inside_head
                     && ((22.2..=24.5).contains(&fy)
                         || (dome >= 0.72 && fy <= 24.5)
                         || ((2.1..=3.6).contains(&ear_l) && dome > 0.78)
                         || ((2.1..=3.6).contains(&ear_r) && dome > 0.78));
-                if on_border || eye_l <= 2.1 || eye_r <= 2.1 {
-                    set_alpha(x, y, 255);
-                }
-            }
+                on_border || eye_l <= 2.1 || eye_r <= 2.1
+            };
             let wave_y = 28.5 + 1.4 * ((fx - 6.0) * 0.35).sin();
-            if (5.0..=31.0).contains(&fx) && (fy - wave_y).abs() <= 1.25 {
-                set_alpha(x, y, 255);
+            if head_hit || ((5.0..=31.0).contains(&fx) && (fy - wave_y).abs() <= 1.25) {
+                rgba[((y as u32 * w + x as u32) * 4 + 3) as usize] = 255;
             }
         }
     }
     Icon::from_rgba(rgba, w, h).expect("valid 36x36 RGBA icon")
 }
 
-/// In-process macOS `NSStatusItem` controller bound to the main GPUI application thread.
+/// In-process macOS `NSStatusItem` controller bound to the main AppKit thread.
 #[derive(Clone, Default)]
 pub struct MenuBarBridge {
     tray: Rc<RefCell<Option<TrayIcon>>>,
@@ -405,20 +310,16 @@ impl MenuBarBridge {
             }
         }));
         let connected = matches!(initial_vm.status, ConnectionStatus::Connected { .. });
-        let icon = build_lychee_template_icon(connected);
-        let menu = build_tray_menu(initial_vm);
         let tray = TrayIconBuilder::new()
-            .with_menu(Box::new(menu))
+            .with_menu(Box::new(build_tray_menu(initial_vm)))
             .with_tooltip("荔连 · SZU SecureLink")
-            .with_icon_templated(icon)
+            .with_icon_templated(build_lychee_template_icon(connected))
             .build()
             .ok();
         if let Some(ref t) = tray {
             let _ = t.set_visible(initial_vm.shell_presence.shows_menu_bar());
         }
-        Self {
-            tray: Rc::new(RefCell::new(tray)),
-        }
+        Self { tray: Rc::new(RefCell::new(tray)) }
     }
 
     /// Updates the macOS Menu Bar icon, visibility, and dropdown menu items from `vm`.
@@ -484,28 +385,12 @@ mod tests {
             assert!(start.toggle_menu_bar().shows_dock() || start.toggle_menu_bar().shows_menu_bar());
             assert_eq!(ShellPresence::from_token(start.as_token()), start);
         }
-        let prefs = AppPreferences {
-            shell_presence: ShellPresence::MenuBarOnly,
-            launch_at_login: true,
-            auto_check_updates: false,
-            locale: UiLocale::EnUs,
-            scheme: UiScheme::BambooColumn,
-        };
-        let parsed = AppPreferences::parse_lines(&prefs.to_lines(), ShellPresence::DockAndMenuBar, true);
-        assert_eq!(parsed, prefs);
-        assert!(launch_agent_plist_contents("/Applications/荔连.app/Contents/MacOS/szu-securelink").contains(LAUNCH_AGENT_LABEL));
-    }
-
-    #[test]
-    fn tray_action_parses_all_variants() {
-        assert_eq!(TrayAction::parse_line("ACT:SHOW_WINDOW"), Some(TrayAction::ShowWindow));
-        assert_eq!(TrayAction::parse_line("ACT:OPEN_SETTINGS"), Some(TrayAction::OpenSettings));
-        assert_eq!(TrayAction::parse_line("ACT:TOGGLE_CONNECT"), Some(TrayAction::ToggleConnect));
-        assert_eq!(TrayAction::parse_line("ACT:REPAIR"), Some(TrayAction::Repair));
-        assert_eq!(TrayAction::parse_line("ACT:TOGGLE_DOCK"), Some(TrayAction::ToggleDock));
-        assert_eq!(TrayAction::parse_line("ACT:TOGGLE_MENUBAR"), Some(TrayAction::ToggleMenuBar));
-        assert_eq!(TrayAction::parse_line("ACT:QUIT"), Some(TrayAction::Quit));
-        assert_eq!(TrayAction::parse_line("ACT:PIN:szu-ehall"), Some(TrayAction::OpenPin("szu-ehall".to_string())));
-        assert_eq!(TrayAction::parse_line("INVALID"), None);
+        let prefs = AppPreferences { shell_presence: ShellPresence::MenuBarOnly, launch_at_login: true, auto_check_updates: false, locale: UiLocale::EnUs, scheme: UiScheme::BambooColumn };
+        assert_eq!(AppPreferences::parse_lines(&prefs.to_lines(), ShellPresence::DockAndMenuBar, true), prefs);
+        assert!(launch_agent_plist_contents(DEFAULT_APP_EXEC).contains(LAUNCH_AGENT_LABEL));
+        for action in ["ACT:SHOW_WINDOW", "ACT:OPEN_SETTINGS", "ACT:TOGGLE_CONNECT", "ACT:REPAIR", "ACT:TOGGLE_DOCK", "ACT:TOGGLE_MENUBAR", "ACT:QUIT", "ACT:PIN:szu-ehall"] {
+            assert!(TrayAction::parse_line(action).is_some());
+        }
+        assert!(TrayAction::parse_line("INVALID").is_none());
     }
 }

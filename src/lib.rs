@@ -5,15 +5,15 @@
 
 #![forbid(unsafe_code)]
 
-extern crate gpui_kit as gpui;
-
 pub mod agent_control;
+pub mod async_util;
 pub mod confusion;
 pub mod ctrl;
 pub mod dns;
 pub mod gpui_tree;
 pub mod gpui_window;
 pub mod gpui_workbench;
+pub mod host_api;
 pub mod ip_math;
 pub mod shaper;
 pub mod shortcuts;

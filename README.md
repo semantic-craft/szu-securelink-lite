@@ -5,17 +5,17 @@
   <p>A clean, native macOS zero-trust campus network client for Shenzhen University</p>
 
   <p>
-    <a href="https://github.com/semantic-craft/szu-securelink-lite/releases/download/v0.2.1/SZU-SecureLink-v0.2.1-macOS-arm64.zip">
-      <img src="https://img.shields.io/badge/⬇_立即下载_荔连_v0.2.1-macOS_Apple_Silicon_(8.9_MB)-8C2232?style=for-the-badge" alt="Download 荔连 v0.2.1 for macOS" />
+    <a href="https://github.com/semantic-craft/szu-securelink-lite/releases/download/v0.2.2/SZU-SecureLink-v0.2.2-macOS-arm64.zip">
+      <img src="https://img.shields.io/badge/⬇_立即下载_荔连_v0.2.2-macOS_Apple_Silicon_(2.8_MB)-8C2232?style=for-the-badge" alt="Download 荔连 v0.2.2 for macOS" />
     </a>
     &nbsp;
-    <a href="https://github.com/semantic-craft/szu-securelink-lite/releases/tag/v0.2.1">
-      <img src="https://img.shields.io/badge/GitHub_Release-v0.2.1-2B2118?style=for-the-badge&logo=github" alt="GitHub Release v0.2.1" />
+    <a href="https://github.com/semantic-craft/szu-securelink-lite/releases/tag/v0.2.2">
+      <img src="https://img.shields.io/badge/GitHub_Release-v0.2.2-2B2118?style=for-the-badge&logo=github" alt="GitHub Release v0.2.2" />
     </a>
   </p>
 
   <p>
-    <a href="#立即下载与安装">中文说明</a> · <a href="#english">English</a> · <a href="https://github.com/semantic-craft/szu-securelink-lite/releases/download/v0.2.1/SZU-SecureLink-v0.2.1-macOS-arm64.zip">直接下载 ZIP</a> · <a href="NOTES.md">实测记录</a>
+    <a href="#立即下载与安装">中文说明</a> · <a href="#english">English</a> · <a href="https://github.com/semantic-craft/szu-securelink-lite/releases/download/v0.2.2/SZU-SecureLink-v0.2.2-macOS-arm64.zip">直接下载 ZIP</a> · <a href="NOTES.md">实测记录</a>
   </p>
 </div>
 
@@ -23,11 +23,11 @@
 
 ## 立即下载与安装
 
-> **直接下载安装包（macOS 13.0+ Apple Silicon，已通过 Apple Developer ID 签名与公证）**
+> **直接下载安装包（macOS 13.0+ Apple Silicon，已通过 Apple Developer ID 签名）**
 >
-> - **直接下载（ZIP，8.9 MiB）**：[SZU-SecureLink-v0.2.1-macOS-arm64.zip](https://github.com/semantic-craft/szu-securelink-lite/releases/download/v0.2.1/SZU-SecureLink-v0.2.1-macOS-arm64.zip)
-> - **版本发布页**：[GitHub Releases · v0.2.1](https://github.com/semantic-craft/szu-securelink-lite/releases/tag/v0.2.1)
-> - **SHA-256 校验值**：`5224a0fc2ba4273d65da8128b2e9379aeba971f1b4341bd11443e9ea3cd807d2`
+> - **直接下载（ZIP，2.8 MiB）**：[SZU-SecureLink-v0.2.2-macOS-arm64.zip](https://github.com/semantic-craft/szu-securelink-lite/releases/download/v0.2.2/SZU-SecureLink-v0.2.2-macOS-arm64.zip)
+> - **版本发布页**：[GitHub Releases · v0.2.2](https://github.com/semantic-craft/szu-securelink-lite/releases/tag/v0.2.2)
+> - **SHA-256 校验值**：`7eaad16e20d8d237cb7af68372fa7792009f6513f97689ac687e0dc9ea904451`
 
 解压后将 **`荔连.app`** 拖入 `/Applications`（应用程序）文件夹，双击即可直接打开使用。
 
@@ -37,7 +37,7 @@
 
 在校外查知网、看外文数据库、进报账系统时，我们只需要一个干净好用的校园网客户端，不想为了连一次内网而在电脑里常驻整套 Electron 渲染进程（官方完整进程组实测约 `655 MiB` RSS）和一堆用不上的后台监控服务。
 
-**荔连（SZU SecureLink）** 用 **Rust + GPUI（Metal 硬件加速）** 重写了桌面工作台，直接对接深圳大学 CAS 统一身份认证与 OpenVPN3 零信任数据面，在完全退出官方客户端进程的情况下独立完成校园网接入。
+**荔连（SZU SecureLink）** 采用 **100% Safe Rust 领域内核 + macOS 原生 AppKit 界面（`NSWindow` / `NSGlassEffectView`）**，直接对接深圳大学 CAS 统一身份认证与 OpenVPN3 零信任数据面，在完全退出官方客户端进程的情况下独立完成校园网接入。
 
 ## 核心特性
 
@@ -76,15 +76,15 @@
 
 <h2 id="english">English</h2>
 
-**Lilian (荔连 · SZU SecureLink)** is a native macOS zero-trust campus network client for Shenzhen University (SZU), built with Rust and GPUI (Metal hardware acceleration).
+**Lilian (荔连 · SZU SecureLink)** is a native macOS zero-trust campus network client for Shenzhen University (SZU), built with a 100% Safe Rust core and native macOS AppKit UI (`NSWindow` + `NSGlassEffectView`).
 
 ### Download for macOS
 
-- **Direct Download (macOS 13.0+ Apple Silicon, Notarized, 8.9 MiB)**: [SZU-SecureLink-v0.2.1-macOS-arm64.zip](https://github.com/semantic-craft/szu-securelink-lite/releases/download/v0.2.1/SZU-SecureLink-v0.2.1-macOS-arm64.zip)
-- **Release Page**: [GitHub Releases · v0.2.1](https://github.com/semantic-craft/szu-securelink-lite/releases/tag/v0.2.1)
-- **SHA-256**: `5224a0fc2ba4273d65da8128b2e9379aeba971f1b4341bd11443e9ea3cd807d2`
+- **Direct Download (macOS 13.0+ Apple Silicon, Developer ID Signed, 2.8 MiB)**: [SZU-SecureLink-v0.2.2-macOS-arm64.zip](https://github.com/semantic-craft/szu-securelink-lite/releases/download/v0.2.2/SZU-SecureLink-v0.2.2-macOS-arm64.zip)
+- **Release Page**: [GitHub Releases · v0.2.2](https://github.com/semantic-craft/szu-securelink-lite/releases/tag/v0.2.2)
+- **SHA-256**: `7eaad16e20d8d237cb7af68372fa7792009f6513f97689ac687e0dc9ea904451`
 
-Unzip the archive, drag **`荔连.app`** into `/Applications`, and double-click to launch (signed with Apple Developer ID and notarized).
+Unzip the archive, drag **`荔连.app`** into `/Applications`, and double-click to launch (signed with Apple Developer ID).
 
 ### Why We Built Lilian
 
@@ -92,7 +92,7 @@ Connecting to the campus network to look up a paper or submit a reimbursement sh
 
 ### Highlights
 
-- **Native Metal UI**: Built with Rust and `gpui-kit`, rendering natively on macOS Metal without an Electron browser shell.
+- **True macOS Native AppKit UI**: Built with a `#![forbid(unsafe_code)]` Rust domain core and native AppKit (`NSWindow`, `NSSwitch`, `NSPopUpButton`, `NSSearchField`, `?` info-tip popovers, and macOS 26 `NSGlassEffectView`) over a versioned JSON host contract.
 - **Collapsible Campus Workbench & Menu Bar Pins**: Groups 13 campus and library services (Reimbursement System, Campus Intranet, OA, Library, CNKI, HeinOnline, Oxford Scholarship, Cambridge Core, PKULaw, Web of Science, and Westlaw) into collapsible sections with 4 customizable menu-bar pins. Clicking any service while disconnected initiates CAS sign-in and opens the target page as soon as `utun` comes up.
 - **Built-In Self-Repair & Instant `utun` Adoption**: Adopts the campus `utun` interface as soon as `executor-engine` assigns the virtual IPv4 address (`~0.25s` after handshake) and includes a one-click **Auto-Repair** action to clear stale processes and flush DNS cache.
 - **Browser-Only CAS Sign-In**: You sign in only inside your default browser on the official SZU CAS page. The client validates one-time `securelink://` callback tickets and never sees or stores your password.

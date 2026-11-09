@@ -236,7 +236,7 @@ fn test_ip_math_and_shortcuts_and_gpui_workbench() {
     assert_eq!(tree.children[2].kind, "AboutFooter");
     assert_eq!(tree.children[2].detail, "深圳大学法律人工智能实训实验室");
     assert_eq!(ABOUT_ATTRIBUTION_TEXT, "深圳大学法律人工智能实训实验室");
-    assert_eq!(APP_VERSION, "0.2.1");
+    assert_eq!(APP_VERSION, "0.2.2");
 
     vm.check_for_updates();
     vm.toggle_settings();

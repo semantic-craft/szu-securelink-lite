@@ -5,7 +5,7 @@
 use crate::ip_math::{parse_ipv4, rejected_for_assignment};
 use crate::shortcuts::valid_url;
 use crate::tray_bridge::TrayAction;
-use gpui_kit::base::async_util::{self, Receiver, Sender};
+use crate::async_util::{self, Receiver, Sender};
 use std::env;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;

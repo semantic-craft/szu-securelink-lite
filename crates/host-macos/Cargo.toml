@@ -1,0 +1,12 @@
+[package]
+name = "szu-host-macos"
+version = "0.2.2"
+edition = "2024"
+description = "Versioned C ABI and native AppKit host bridge for SZU SecureLink (msime host-api architecture)."
+
+[lib]
+name = "szu_host_macos"
+path = "src/lib.rs"
+
+[build-dependencies]
+cc = "1.2"

@@ -1,26 +1,28 @@
-//! Pure-Rust GPUI-Kit style reactive desktop workbench & menu-bar view tree.
+//! Pure-Rust desktop workbench & menu-bar domain state machine (`#![forbid(unsafe_code)]`).
 //!
-//! Provides a declarative, GPU-compositor-ready (`gpui-kit` / native macOS menu bar)
-//! component tree and state reducer for SZU SecureLink Lite without Electron overhead.
+//! Owns all business rules, defaults, shortcut filtering, Sparkle update validation,
+//! and preferences persistence shared with the native macOS AppKit host.
 
-use crate::shortcuts::{default_shortcuts, extract_hosts, valid_url, CampusShortcut, ShortcutCategory};
+#![forbid(unsafe_code)]
+
+use crate::shortcuts::{CampusShortcut, ShortcutCategory, default_shortcuts, extract_hosts, valid_url};
 use crate::sparkle::{
-    format_package_size_mb, is_newer_version, SparkleAppcastItem, SparkleConfig, SparkleUpdateState,
+    SparkleAppcastItem, SparkleConfig, SparkleUpdateState, format_package_size_mb, is_newer_version,
 };
-use crate::tray_bridge::{set_launch_at_login, AppPreferences, ShellPresence};
+use crate::tray_bridge::{AppPreferences, ShellPresence, set_launch_at_login};
 
 /// Official Chinese display name for the SZU SecureLink desktop client.
 pub const APP_CHINESE_NAME: &str = "荔连";
-
 /// Subtle attribution text displayed on the About page and near the Check for Updates control.
 pub const ABOUT_ATTRIBUTION_TEXT: &str = "深圳大学法律人工智能实训实验室";
-
 /// Application version string displayed in the About page and update check.
-pub const APP_VERSION: &str = "0.2.1";
-
+pub const APP_VERSION: &str = "0.2.2";
 /// Default 4 user-pinned campus services in the macOS menu bar popover.
 pub const DEFAULT_MENU_BAR_PIN_IDS: [&str; 4] = [
-    "szu-reimburse-system", "szu-finance-sso", "szu-cnki-sso", "szu-ehall",
+    "szu-reimburse-system",
+    "szu-finance-sso",
+    "szu-cnki-sso",
+    "szu-ehall",
 ];
 
 /// Supported UI copy locales (`zh-CN` primary, `en-US` secondary).
@@ -63,7 +65,7 @@ pub enum ShortcutLaunchOutcome {
     QueuedAfterConnect { shortcut_id: String, url: String },
 }
 
-/// High-level connection lifecycle state displayed in the GPUI Workbench header and macOS menu bar.
+/// High-level connection lifecycle state displayed in the Workbench header and macOS menu bar.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConnectionStatus {
     /// Idle before initiating CAS login.
@@ -84,43 +86,27 @@ pub enum WorkbenchRoute {
     Settings,
 }
 
-/// Declarative GPUI-Kit UI node re-exported from [`crate::gpui_tree`].
+/// Declarative UI node re-exported from [`crate::gpui_tree`].
 pub use crate::gpui_tree::GpuiElement;
 
-/// Reactive state container for the GPUI Workbench and macOS status-bar tray menu.
+/// Reactive state container for the Workbench and macOS status-bar tray menu.
 #[derive(Debug, Clone)]
 pub struct WorkbenchViewModel {
-    /// Organization code (`"szu"`).
     pub org: String,
-    /// Current Zero-Trust tunnel state.
     pub status: ConnectionStatus,
-    /// All shortcuts (built-in SSO/library entries + user custom entries).
     pub shortcuts: Vec<CampusShortcut>,
-    /// Live search filter query in the Workbench toolbar.
     pub search_query: String,
-    /// Active page route (`Workbench` vs `Settings`).
     pub route: WorkbenchRoute,
-    /// Latest update-check status text shown in the Settings page.
     pub update_status: String,
-    /// Active display locale (`zh-CN` by default).
     pub locale: UiLocale,
-    /// Active UI layout and accent scheme (`CrimsonSplit` by default).
     pub scheme: UiScheme,
-    /// User-customizable 4 pinned shortcut IDs shown in the macOS menu bar tray.
     pub menu_bar_pins: [String; 4],
-    /// Shortcut ID queued for automatic launch once a beginner's auto-connect finishes.
     pub pending_open_shortcut_id: Option<String>,
-    /// Most recently opened shortcut URL.
     pub last_opened_url: Option<String>,
-    /// Sparkle 2.x auto-update configuration.
     pub sparkle_config: SparkleConfig,
-    /// Sparkle 2.x auto-update state.
     pub sparkle_state: SparkleUpdateState,
-    /// Categories currently folded in the right-hand accordion pane.
     pub collapsed_categories: Vec<ShortcutCategory>,
-    /// macOS Dock and Menu Bar icon visibility mode (never both hidden).
     pub shell_presence: ShellPresence,
-    /// Whether `荔连.app` launches automatically at macOS user login.
     pub launch_at_login: bool,
 }
 
@@ -131,16 +117,14 @@ impl Default for WorkbenchViewModel {
 }
 
 impl WorkbenchViewModel {
+    /// Creates a new [`WorkbenchViewModel`] seeded from persisted user preferences.
     #[must_use]
     pub fn new() -> Self {
         #[cfg(not(test))]
         let prefs = AppPreferences::load_persisted();
         #[cfg(test)]
         let prefs = AppPreferences::default();
-        let sparkle_config = SparkleConfig {
-            automatic_checks: prefs.auto_check_updates,
-            ..SparkleConfig::default()
-        };
+        let sparkle_config = SparkleConfig { automatic_checks: prefs.auto_check_updates, ..SparkleConfig::default() };
         let mut vm = Self {
             org: "szu".to_string(),
             status: ConnectionStatus::Disconnected,
@@ -181,10 +165,7 @@ impl WorkbenchViewModel {
     /// Returns favorite shortcuts belonging to `category` matching `search_query`.
     #[must_use]
     pub fn shortcuts_in_category(&self, category: ShortcutCategory) -> Vec<&CampusShortcut> {
-        self.favorite_shortcuts()
-            .into_iter()
-            .filter(|s| s.category == category)
-            .collect()
+        self.favorite_shortcuts().into_iter().filter(|s| s.category == category).collect()
     }
 
     /// Switches the UI locale between Simplified Chinese and English and refreshes status copy.
@@ -238,9 +219,7 @@ impl WorkbenchViewModel {
 
     /// Runs a version update check and opens or updates the Settings state.
     pub fn check_for_updates(&mut self) {
-        self.sparkle_state = SparkleUpdateState::UpToDate {
-            version: APP_VERSION.to_string(),
-        };
+        self.sparkle_state = SparkleUpdateState::UpToDate { version: APP_VERSION.to_string() };
         self.sync_update_status_text();
     }
 
@@ -248,11 +227,7 @@ impl WorkbenchViewModel {
     pub fn apply_sparkle_appcast(&mut self, item: SparkleAppcastItem) -> bool {
         if item.validate().is_err() {
             self.sparkle_state = SparkleUpdateState::Failed {
-                reason: if self.locale == UiLocale::EnUs {
-                    "Update signature or metadata invalid".to_string()
-                } else {
-                    "更新包签名或元数据校验未通过".to_string()
-                },
+                reason: if self.locale == UiLocale::EnUs { "Update signature or metadata invalid".to_string() } else { "更新包签名或元数据校验未通过".to_string() },
             };
             self.sync_update_status_text();
             return false;
@@ -260,9 +235,7 @@ impl WorkbenchViewModel {
         if is_newer_version(APP_VERSION, &item.version) {
             self.sparkle_state = SparkleUpdateState::UpdateAvailable(item);
         } else {
-            self.sparkle_state = SparkleUpdateState::UpToDate {
-                version: APP_VERSION.to_string(),
-            };
+            self.sparkle_state = SparkleUpdateState::UpToDate { version: APP_VERSION.to_string() };
         }
         self.sync_update_status_text();
         true
@@ -310,8 +283,7 @@ impl WorkbenchViewModel {
     /// Activates a shortcut by ID. If disconnected, queues the shortcut and starts connecting automatically.
     pub fn activate_shortcut(&mut self, id: &str) -> Option<ShortcutLaunchOutcome> {
         let item = self.shortcuts.iter().find(|s| s.id == id)?;
-        let url = item.url.clone();
-        let name = item.name.clone();
+        let (url, name) = (item.url.clone(), item.name.clone());
         match &self.status {
             ConnectionStatus::Connected { .. } => {
                 self.last_opened_url = Some(url.clone());
@@ -325,10 +297,7 @@ impl WorkbenchViewModel {
                     format!("正在为您连接校园网，连上后自动打开「{name}」…")
                 };
                 self.status = ConnectionStatus::Connecting { phase };
-                Some(ShortcutLaunchOutcome::QueuedAfterConnect {
-                    shortcut_id: id.to_string(),
-                    url,
-                })
+                Some(ShortcutLaunchOutcome::QueuedAfterConnect { shortcut_id: id.to_string(), url })
             }
         }
     }
@@ -336,10 +305,7 @@ impl WorkbenchViewModel {
     /// Returns the 4 user-pinned shortcuts for the macOS menu bar quick-access list.
     #[must_use]
     pub fn menu_bar_shortcuts(&self) -> Vec<&CampusShortcut> {
-        self.menu_bar_pins
-            .iter()
-            .filter_map(|pin_id| self.shortcuts.iter().find(|s| &s.id == pin_id))
-            .collect()
+        self.menu_bar_pins.iter().filter_map(|pin_id| self.shortcuts.iter().find(|s| &s.id == pin_id)).collect()
     }
 
     /// Replaces slot `0..4` in the macOS menu bar quick-access pins with an existing shortcut `id`.
@@ -362,11 +328,10 @@ impl WorkbenchViewModel {
         if !self.shortcuts.iter().any(|s| s.id == id) {
             return false;
         }
-        if self.is_pinned_to_menu_bar(id) {
-            return true;
+        if !self.is_pinned_to_menu_bar(id) {
+            self.menu_bar_pins.rotate_left(1);
+            self.menu_bar_pins[3] = id.to_string();
         }
-        self.menu_bar_pins.rotate_left(1);
-        self.menu_bar_pins[3] = id.to_string();
         true
     }
 
@@ -391,23 +356,14 @@ impl WorkbenchViewModel {
 
     /// Adds a validated custom campus shortcut.
     pub fn add_custom_shortcut(&mut self, name: &str, subtitle: &str, url: &str) -> bool {
-        let clean_name = name.trim();
-        let clean_url = url.trim();
-        if clean_name.is_empty()
-            || clean_name.len() > 64
-            || !valid_url(clean_url)
-            || self.shortcuts.len() >= 32
-        {
+        let (clean_name, clean_url) = (name.trim(), url.trim());
+        if clean_name.is_empty() || clean_name.len() > 64 || !valid_url(clean_url) || self.shortcuts.len() >= 32 {
             return false;
         }
         self.shortcuts.push(CampusShortcut {
             id: format!("custom-{}", self.shortcuts.len() + 1),
             name: clean_name.to_string(),
-            subtitle: if subtitle.trim().is_empty() {
-                "自定义常用校内入口".to_string()
-            } else {
-                subtitle.trim().to_string()
-            },
+            subtitle: if subtitle.trim().is_empty() { "自定义常用校内入口".to_string() } else { subtitle.trim().to_string() },
             url: clean_url.to_string(),
             category: ShortcutCategory::Custom,
             is_favorite: true,
@@ -420,29 +376,17 @@ impl WorkbenchViewModel {
     #[must_use]
     pub fn favorite_shortcuts(&self) -> Vec<&CampusShortcut> {
         let q = self.search_query.trim().to_ascii_lowercase();
-        self.shortcuts
-            .iter()
-            .filter(|s| {
-                s.is_favorite
-                    && (q.is_empty()
-                        || s.name.to_ascii_lowercase().contains(&q)
-                        || s.subtitle.to_ascii_lowercase().contains(&q))
-            })
-            .collect()
+        self.shortcuts.iter().filter(|s| s.is_favorite && (q.is_empty() || s.name.to_ascii_lowercase().contains(&q) || s.subtitle.to_ascii_lowercase().contains(&q))).collect()
     }
 
     /// Returns all unique domains that should be pre-resolved via the in-tunnel DNS (`192.168.247.6`).
     #[must_use]
     pub fn in_tunnel_resolve_domains(&self) -> Vec<String> {
         let mut domains = vec![
-            "www1.szu.edu.cn".to_string(),
-            "authserver.szu.edu.cn".to_string(),
-            "ehall.szu.edu.cn".to_string(),
-            "cwpt.szu.edu.cn".to_string(),
-            "oa.szu.edu.cn".to_string(),
-            "www.lib.szu.edu.cn".to_string(),
-            "idp.szu.edu.cn".to_string(),
-            "ezproxy.lib.szu.edu.cn".to_string(),
+            "www1.szu.edu.cn".to_string(), "authserver.szu.edu.cn".to_string(),
+            "ehall.szu.edu.cn".to_string(), "cwpt.szu.edu.cn".to_string(),
+            "oa.szu.edu.cn".to_string(), "www.lib.szu.edu.cn".to_string(),
+            "idp.szu.edu.cn".to_string(), "ezproxy.lib.szu.edu.cn".to_string(),
             "accproxy.lib.szu.edu.cn".to_string(),
         ];
         for h in extract_hosts(&self.shortcuts) {
