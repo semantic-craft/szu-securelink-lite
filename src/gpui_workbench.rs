@@ -86,9 +86,6 @@ pub enum WorkbenchRoute {
     Settings,
 }
 
-/// Declarative UI node re-exported from [`crate::gpui_tree`].
-pub use crate::gpui_tree::GpuiElement;
-
 /// Reactive state container for the Workbench and macOS status-bar tray menu.
 #[derive(Debug, Clone)]
 pub struct WorkbenchViewModel {

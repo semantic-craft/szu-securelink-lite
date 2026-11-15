@@ -510,6 +510,10 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(self.verify("finance", "--capture-plan").returncode, 2)
 
     def test_live_mode_collects_read_only_evidence_and_fails_closed(self):
+        out_dir = ROOT / "out"
+        out_existed = out_dir.exists()
+        if not out_existed:
+            self.addCleanup(lambda: out_dir.rmdir() if out_dir.is_dir() and not any(out_dir.iterdir()) else None)
         result = self.verify("finance", "--allow-session-interruption", "--allow-protocol-change")
         self.assertEqual(result.returncode, 1)
         verdict = json.loads(result.stdout)

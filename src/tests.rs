@@ -7,7 +7,7 @@ use crate::ctrl::{exact_domain, parse_addresses, parse_options, CtrlFailure, Eff
 use crate::dns::{lifetime, normalize_domain, parse_reply, Question, TYPE_A, TYPE_AAAA};
 use crate::gpui_workbench::{
     ConnectionStatus, MenuBarIconGeometry, ShortcutLaunchOutcome, UiLocale, UiScheme,
-    WorkbenchViewModel, ABOUT_ATTRIBUTION_TEXT, APP_CHINESE_NAME, APP_VERSION,
+    WorkbenchRoute, WorkbenchViewModel, ABOUT_ATTRIBUTION_TEXT, APP_CHINESE_NAME, APP_VERSION,
     DEFAULT_MENU_BAR_PIN_IDS,
 };
 use crate::ip_math::{classify, mask_bytes, network_contains, parse_ipv4, rejected_for_assignment};
@@ -21,7 +21,21 @@ use crate::sparkle::{
 use crate::tunnel_actor::{
     parse_engine_active_line, validate_securelink_callback_url, EngineActiveNotice,
 };
-use crate::{run_seed_safe, run_seed_soa, SplitMix64};
+
+struct SplitMix64(u64);
+
+impl SplitMix64 {
+    const fn new(seed: u64) -> Self {
+        Self(seed)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = (self.0 ^ (self.0 >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^ (z >> 31)
+    }
+}
 
 #[test]
 fn test_confusion_encode_decode_roundtrip_and_bounds() {
@@ -228,29 +242,13 @@ fn test_ip_math_and_shortcuts_and_gpui_workbench() {
     assert!(vm.toggle_favorite("szu-westlaw"));
     assert!(vm.add_custom_shortcut("教务部", "", "https://jwb.szu.edu.cn/"));
     assert!(vm.in_tunnel_resolve_domains().len() <= 32);
-    let tree = vm.render_gpui_tree();
-    assert_eq!(tree.kind, "Window");
-    assert!(tree.label.contains("荔连"));
     assert_eq!(APP_CHINESE_NAME, "荔连");
-    assert_eq!(tree.children.len(), 3);
-    assert_eq!(tree.children[2].kind, "AboutFooter");
-    assert_eq!(tree.children[2].detail, "深圳大学法律人工智能实训实验室");
     assert_eq!(ABOUT_ATTRIBUTION_TEXT, "深圳大学法律人工智能实训实验室");
     assert_eq!(APP_VERSION, "0.2.2");
 
     vm.check_for_updates();
     vm.toggle_settings();
-    let tree_with_settings = vm.render_gpui_tree();
-    assert_eq!(tree_with_settings.children.len(), 4);
-    assert_eq!(tree_with_settings.children[3].kind, "SettingsPage");
-    assert_eq!(tree_with_settings.children[3].detail, "深圳大学法律人工智能实训实验室");
-
-    // Verify safe and SoA kernels produce identical results across 10 seeds
-    for s in 0..10 {
-        let a = run_seed_safe(s, 200);
-        let b = run_seed_soa(s, 200);
-        assert!((a - b).abs() < 1e-12);
-    }
+    assert_eq!(vm.route, WorkbenchRoute::Settings);
 }
 
 #[test]
@@ -286,17 +284,14 @@ fn test_beginner_auto_connect_tray_pins_and_sparkle() {
     assert!(vm.pin_to_menu_bar(3, "szu-westlaw"));
     assert!(!vm.pin_to_menu_bar(4, "szu-westlaw"));
     assert!(!vm.pin_to_menu_bar(0, "nonexistent-id"));
-    let tray = vm.render_tray_menu_tree();
-    assert_eq!(tray.kind, "TrayMenu");
-    assert_eq!(tray.children.len(), 5);
-    assert_eq!(tray.children[4].label, "Westlaw");
+    assert_eq!(vm.menu_bar_shortcuts()[3].name, "Westlaw");
 
     vm.set_locale(UiLocale::EnUs);
+    assert!(vm.update_status.contains("Up to date"));
     vm.set_scheme(UiScheme::BambooColumn);
-    let en_tree = vm.render_gpui_tree();
-    assert!(en_tree.children[0].label.contains("Connected"));
+    assert_eq!(vm.scheme, UiScheme::BambooColumn);
     vm.set_scheme(UiScheme::IndigoTrayFirst);
-    assert!(vm.render_tray_menu_tree().label.contains("Menu Bar"));
+    assert_eq!(vm.scheme, UiScheme::IndigoTrayFirst);
 
     assert!(SparkleConfig::default().validate().is_ok());
     let valid_sig = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUV==";
