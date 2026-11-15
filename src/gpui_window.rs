@@ -14,6 +14,7 @@ use crate::gpui_workbench::{
 use crate::host_api::{build_native_snapshot, dispatch_window_request, ok_envelope};
 use crate::tray_bridge::{MenuBarBridge, TrayAction};
 use crate::tunnel_actor::{GenerationId, SessionCommand, SessionEvent, TunnelHandle};
+use crate::version_page::SettingsTab;
 use serde_json::json;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -77,6 +78,9 @@ impl WorkbenchWindow {
                 self.generation = generation;
                 self.vm.status = ConnectionStatus::Disconnected;
             }
+            SessionEvent::UpdateCheckFinished(res) => {
+                self.vm.apply_update_check_result(res);
+            }
             SessionEvent::TrayAction(action) => match action {
                 TrayAction::ToggleConnect => {
                     self.actor.send(SessionCommand::ToggleConnect);
@@ -87,6 +91,11 @@ impl WorkbenchWindow {
                 TrayAction::OpenPin(id) => self.on_shortcut_clicked(&id),
                 TrayAction::OpenSettings => {
                     self.vm.route = WorkbenchRoute::Settings;
+                }
+                TrayAction::CheckUpdates => {
+                    self.vm.route = WorkbenchRoute::Settings;
+                    self.vm.version_page.tab = SettingsTab::Version;
+                    self.trigger_update_check();
                 }
                 TrayAction::ToggleDock => {
                     self.vm.shell_presence = self.vm.shell_presence.toggle_dock();
@@ -104,6 +113,14 @@ impl WorkbenchWindow {
             _ => {}
         }
         self.tray_bridge.sync_from_vm(&self.vm);
+    }
+
+    /// Starts an asynchronous GitHub Releases update check if none is currently running.
+    pub fn trigger_update_check(&mut self) {
+        if self.vm.begin_update_check() {
+            self.actor.send(SessionCommand::CheckForUpdates);
+            self.tray_bridge.sync_from_vm(&self.vm);
+        }
     }
 
     /// Handles clicking a campus shortcut card or menu-bar pin.
@@ -151,6 +168,15 @@ pub fn run_desktop_app(actor: TunnelHandle, events: Receiver<SessionEvent>) {
             let bridge = MenuBarBridge::spawn(init_tx.clone(), &vm);
             let mut win = WorkbenchWindow::with_bridge(init_actor.clone(), bridge);
             win.vm = vm;
+            let auto_check = win.vm.sparkle_config.automatic_checks
+                && std::env::var_os("SZU_SECURELINK_DISABLE_AUTO_UPDATE_CHECK").is_none();
+            if auto_check {
+                let auto_actor = init_actor.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    auto_actor.send(SessionCommand::CheckForUpdates);
+                });
+            }
             let snap = build_native_snapshot(&win);
             *init_cell.borrow_mut() = Some(win);
             ok_envelope(snap)
@@ -175,7 +201,9 @@ pub fn run_desktop_app(actor: TunnelHandle, events: Receiver<SessionEvent>) {
                         quit = true;
                         break;
                     }
-                    SessionEvent::TrayAction(TrayAction::ShowWindow | TrayAction::OpenSettings) => {
+                    SessionEvent::TrayAction(
+                        TrayAction::ShowWindow | TrayAction::OpenSettings | TrayAction::CheckUpdates,
+                    ) => {
                         show_window = true;
                     }
                     _ => {}

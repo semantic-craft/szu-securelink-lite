@@ -45,6 +45,8 @@ pub enum SessionCommand {
     HandleCallbackUrl(String),
     /// Opens a validated `http://` or `https://` URL in the default browser.
     OpenBrowserUrl(String),
+    /// Checks GitHub Releases for a newer application version in the background.
+    CheckForUpdates,
     /// Stops the actor loop and terminates any active child process.
     Shutdown,
 }
@@ -58,6 +60,8 @@ pub enum SessionEvent {
     TunnelActive { generation: GenerationId, notice: EngineActiveNotice },
     /// Tunnel session ended or was disconnected for `generation`.
     Disconnected { generation: GenerationId, reason: String },
+    /// Background GitHub Releases update check completed.
+    UpdateCheckFinished(crate::version_page::UpdateCheckResult),
     /// User interacted with the top-right macOS Menu Bar status item.
     TrayAction(TrayAction),
 }
@@ -228,6 +232,7 @@ impl TunnelActor {
             while let Ok(cmd) = cmd_rx.recv_blocking() {
                 match cmd {
                     SessionCommand::OpenBrowserUrl(url) => open_url_reaped(&url),
+                    SessionCommand::CheckForUpdates => crate::version_page::spawn_github_update_check(evt_tx.clone()),
                     SessionCommand::ToggleConnect => {
                         let child_alive = active_child.as_mut().is_some_and(|c| c.try_wait().ok().flatten().is_none());
                         if !matches!(state, ActorTunnelState::Disconnected) && (child_alive || probe_live_campus_utun().is_some()) {
@@ -322,15 +327,7 @@ fn terminate_child(slot: &mut Option<Child>, stdin_slot: &mut Option<ChildStdin>
     let _ = Command::new("/usr/bin/pkill").args(["-TERM", "-f", "szu-securelink-diagnostic --headless-tunnel-worker"]).status();
 }
 
-fn run_auto_repair(
-    config: &TunnelConfig,
-    generation: GenerationId,
-    active_child: &mut Option<Child>,
-    active_stdin: &mut Option<ChildStdin>,
-    state: &mut ActorTunnelState,
-    evt_tx: &Sender<SessionEvent>,
-    cmd_tx: &Sender<SessionCommand>,
-) {
+fn run_auto_repair(config: &TunnelConfig, generation: GenerationId, active_child: &mut Option<Child>, active_stdin: &mut Option<ChildStdin>, state: &mut ActorTunnelState, evt_tx: &Sender<SessionEvent>, cmd_tx: &Sender<SessionCommand>) {
     let phase = "正在自动修复：检测隧道接口、清理残留进程与重置协议注册…".to_string();
     let _ = evt_tx.try_send(SessionEvent::ConnectingPhase { generation, phase });
     let _ = Command::new("/usr/bin/dscacheutil").arg("-flushcache").status();

@@ -89,17 +89,13 @@ impl ShellPresence {
     /// Loads the user's persisted [`ShellPresence`] from `~/Library/Application Support/szu-securelink/shell-presence.txt`.
     #[must_use]
     pub fn load_persisted() -> Self {
-        Self::config_path()
-            .and_then(|p| fs::read_to_string(p).ok())
-            .map_or(Self::DockAndMenuBar, |s| Self::from_token(&s))
+        Self::config_path().and_then(|p| fs::read_to_string(p).ok()).map_or(Self::DockAndMenuBar, |s| Self::from_token(&s))
     }
 
     /// Persists [`ShellPresence`] to `~/Library/Application Support/szu-securelink/shell-presence.txt`.
     pub fn save_persisted(self) {
         if let Some(path) = Self::config_path() {
-            if let Some(parent) = path.parent() {
-                let _ = fs::create_dir_all(parent);
-            }
+            if let Some(parent) = path.parent() { let _ = fs::create_dir_all(parent); }
             let _ = fs::write(path, format!("{}\n", self.as_token()));
         }
     }
@@ -234,6 +230,7 @@ pub fn set_launch_at_login(enabled: bool) -> bool {
 pub enum TrayAction {
     ShowWindow,
     OpenSettings,
+    CheckUpdates,
     ToggleConnect,
     Repair,
     OpenPin(String),
@@ -250,6 +247,7 @@ impl TrayAction {
         match rest {
             "SHOW_WINDOW" => Some(Self::ShowWindow),
             "OPEN_SETTINGS" => Some(Self::OpenSettings),
+            "CHECK_UPDATES" => Some(Self::CheckUpdates),
             "TOGGLE_CONNECT" => Some(Self::ToggleConnect),
             "REPAIR" => Some(Self::Repair),
             "TOGGLE_DOCK" => Some(Self::ToggleDock),
@@ -366,6 +364,7 @@ fn build_tray_menu(vm: &WorkbenchViewModel) -> Menu {
     let _ = menu.append(&PredefinedMenuItem::separator());
     let _ = menu.append(&MenuItem::with_id("ACT:SHOW_WINDOW", if en { "Open Main Workbench" } else { "打开主工作台窗口" }, true, None));
     let _ = menu.append(&MenuItem::with_id("ACT:OPEN_SETTINGS", if en { "Settings…" } else { "偏好设置…" }, true, None));
+    let _ = menu.append(&MenuItem::with_id("ACT:CHECK_UPDATES", if en { "Check for Updates…" } else { "检查更新…" }, true, None));
     let _ = menu.append(&CheckMenuItem::with_id("ACT:TOGGLE_DOCK", if en { "Show Dock Icon" } else { "显示 Dock 栏图标" }, true, vm.shell_presence.shows_dock(), None));
     let _ = menu.append(&CheckMenuItem::with_id("ACT:TOGGLE_MENUBAR", if en { "Show Menu Bar Icon" } else { "显示菜单栏图标" }, true, vm.shell_presence.shows_menu_bar(), None));
     let _ = menu.append(&PredefinedMenuItem::separator());
@@ -388,7 +387,7 @@ mod tests {
         let prefs = AppPreferences { shell_presence: ShellPresence::MenuBarOnly, launch_at_login: true, auto_check_updates: false, locale: UiLocale::EnUs, scheme: UiScheme::BambooColumn };
         assert_eq!(AppPreferences::parse_lines(&prefs.to_lines(), ShellPresence::DockAndMenuBar, true), prefs);
         assert!(launch_agent_plist_contents(DEFAULT_APP_EXEC).contains(LAUNCH_AGENT_LABEL));
-        for action in ["ACT:SHOW_WINDOW", "ACT:OPEN_SETTINGS", "ACT:TOGGLE_CONNECT", "ACT:REPAIR", "ACT:TOGGLE_DOCK", "ACT:TOGGLE_MENUBAR", "ACT:QUIT", "ACT:PIN:szu-ehall"] {
+        for action in ["ACT:SHOW_WINDOW", "ACT:OPEN_SETTINGS", "ACT:CHECK_UPDATES", "ACT:TOGGLE_CONNECT", "ACT:REPAIR", "ACT:TOGGLE_DOCK", "ACT:TOGGLE_MENUBAR", "ACT:QUIT", "ACT:PIN:szu-ehall"] {
             assert!(TrayAction::parse_line(action).is_some());
         }
         assert!(TrayAction::parse_line("INVALID").is_none());

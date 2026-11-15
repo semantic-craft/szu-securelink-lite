@@ -2,6 +2,7 @@ fn main() {
     println!("cargo:rerun-if-changed=include/securelink_client.h");
     println!("cargo:rerun-if-changed=../../platforms/macos/src/NativeGlassBackground.h");
     println!("cargo:rerun-if-changed=../../platforms/macos/src/SettingsLayout.h");
+    println!("cargo:rerun-if-changed=../../platforms/macos/src/VersionPageView.h");
     println!("cargo:rerun-if-changed=../../platforms/macos/src/WindowPresentation.h");
     println!("cargo:rerun-if-changed=../../platforms/macos/src/SecureLinkNativeApp.mm");
 

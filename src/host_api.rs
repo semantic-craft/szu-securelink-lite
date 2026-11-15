@@ -14,9 +14,10 @@ use crate::gpui_workbench::{
     WorkbenchRoute,
 };
 use crate::shortcuts::ShortcutCategory;
-use crate::sparkle::format_route_count;
+use crate::sparkle::{SparkleUpdateState, format_route_count};
 use crate::tray_bridge::{ShellPresence, TrayAction};
 use crate::tunnel_actor::{SessionCommand, SessionEvent, validate_securelink_callback_url};
+use crate::version_page::{GITHUB_RELEASES_PAGE_URL, SettingsTab, build_version_page_snapshot};
 use serde_json::{Value, json};
 
 /// Version of the `szu-securelink` native host JSON ABI.
@@ -79,80 +80,28 @@ fn build_settings_rows(win: &WorkbenchWindow, en: bool) -> Value {
         json!({ "key": key, "title": title, "inline_detail": inline, "info_tip": tip })
     };
     json!([
-        row(
-            "shell_presence",
-            if en { "System Presence Mode" } else { "系统常驻图标模式" },
-            None,
-            if en {
-                "Controls Dock and Menu Bar icon visibility. At least one entry point stays visible so closing the window never strands the background process."
-            } else {
-                "控制程序坞（Dock）与右上角菜单栏图标的显示方式；系统强制至少保留一处可见入口，关闭窗口后点击图标即可重新唤起工作台。"
-            },
-        ),
-        row(
-            "launch_at_login",
-            if en { "Launch at macOS Login" } else { "开机自动启动荔连" },
-            None,
-            if en {
-                "Installs or removes ~/Library/LaunchAgents/local.szu.securelink.login.plist for the current macOS user."
-            } else {
-                "在当前用户目录写入或移除 ~/Library/LaunchAgents/local.szu.securelink.login.plist，登录 macOS 时自动在后台就绪。"
-            },
-        ),
-        row(
-            "locale",
-            if en { "Interface Language" } else { "界面显示语言" },
-            None,
-            if en {
-                "Switches all native workbench, settings, and menu bar labels between Simplified Chinese and English immediately."
-            } else {
-                "立即切换主工作台、偏好设置与菜单栏托盘的中英文界面文案。"
-            },
-        ),
-        row(
-            "scheme",
-            if en { "Accent Color Theme" } else { "主题强调色" },
-            None,
-            if en {
-                "Selects the traditional Chinese single-accent tint (SZU Lychee Crimson, Bamboo Academy Green, or Pine Indigo) while respecting macOS Aqua and Dark Aqua appearance."
-            } else {
-                "选择中国传统单色强调色（深大荔枝红、竹院青、松烟靛），同时自动跟随 macOS 浅色（Aqua）与深色（Dark Aqua）外观。"
-            },
-        ),
-        row(
-            "auto_check_updates",
-            if en { "Automatic Update Checks" } else { "自动检查版本更新" },
-            None,
-            if en {
-                "Periodically checks the Ed25519-signed Sparkle 2.x appcast feed in the background."
-            } else {
-                "后台定期向 Ed25519 签名校验的 Sparkle 2.x 更新源查询新版本。"
-            },
-        ),
-        row(
-            "update_status",
-            if en { "Software Version & Sparkle Status" } else { "当前版本与更新状态" },
-            Some(win.vm.update_status.clone()),
-            if en {
-                "All update packages require Sparkle Ed25519 signature verification and HTTPS transport before installation."
-            } else {
-                "所有更新包均须通过 Sparkle Ed25519 数字签名与 HTTPS 传输校验后方可安装。"
-            },
-        ),
-        row(
-            "tunnel_helper",
-            if en { "Zero-Trust Tunnel & Route Helper" } else { "零信任隧道与特权路由助手" },
-            Some(if en {
-                format!("DNS 192.168.247.6 · {helper_routes} · Safe Rust Core")
-            } else {
-                format!("内网 DNS 192.168.247.6 · {helper_routes} · 100% Safe Rust 内核")
-            }),
-            if en {
-                "Resets stale utun routes and scoped campus DNS resolvers if campus portals fail to load after sleep/wake."
-            } else {
-                "当休眠唤醒或网络切换导致校内域名无法解析时，可一键清理残留路由并重建零信任隧道。"
-            },
-        ),
+        row("shell_presence", if en { "System Presence Mode" } else { "系统常驻图标模式" }, None,
+            if en { "Controls Dock and Menu Bar icon visibility. At least one entry point stays visible so closing the window never strands the background process." }
+            else { "控制程序坞（Dock）与右上角菜单栏图标的显示方式；系统强制至少保留一处可见入口，关闭窗口后点击图标即可重新唤起工作台。" }),
+        row("launch_at_login", if en { "Launch at macOS Login" } else { "开机自动启动荔连" }, None,
+            if en { "Installs or removes ~/Library/LaunchAgents/local.szu.securelink.login.plist for the current macOS user." }
+            else { "在当前用户目录写入或移除 ~/Library/LaunchAgents/local.szu.securelink.login.plist，登录 macOS 时自动在后台就绪。" }),
+        row("locale", if en { "Interface Language" } else { "界面显示语言" }, None,
+            if en { "Switches all native workbench, settings, and menu bar labels between Simplified Chinese and English immediately." }
+            else { "立即切换主工作台、偏好设置与菜单栏托盘的中英文界面文案。" }),
+        row("scheme", if en { "Accent Color Theme" } else { "主题强调色" }, None,
+            if en { "Selects the traditional Chinese single-accent tint (SZU Lychee Crimson, Bamboo Academy Green, or Pine Indigo) while respecting macOS Aqua and Dark Aqua appearance." }
+            else { "选择中国传统单色强调色（深大荔枝红、竹院青、松烟靛），同时自动跟随 macOS 浅色（Aqua）与深色（Dark Aqua）外观。" }),
+        row("auto_check_updates", if en { "Automatic Update Checks" } else { "自动检查版本更新" }, None,
+            if en { "Periodically queries GitHub Releases (semantic-craft/szu-securelink-lite) and signed Sparkle feeds in the background after launch." }
+            else { "启动后在后台定期核对 GitHub Releases（semantic-craft/szu-securelink-lite）与 Sparkle 更新源。" }),
+        row("update_status", if en { "Software Version & Updates" } else { "当前版本与更新状态" }, Some(win.vm.update_status.clone()),
+            if en { "Inspect current version, GitHub Releases check status, and release notes on the Version & Updates tab; packages use HTTPS and Developer ID / Sparkle verification." }
+            else { "在「版本与更新」分页查看版本信息、GitHub Releases 检查结果与历史更新记录；发布包经 HTTPS 传输并具 Developer ID 与 Sparkle 校验。" }),
+        row("tunnel_helper", if en { "Zero-Trust Tunnel & Route Helper" } else { "零信任隧道与特权路由助手" },
+            Some(if en { format!("DNS 192.168.247.6 · {helper_routes} · Safe Rust Core") } else { format!("内网 DNS 192.168.247.6 · {helper_routes} · 100% Safe Rust 内核") }),
+            if en { "Resets stale utun routes and scoped campus DNS resolvers if campus portals fail to load after sleep/wake." }
+            else { "当休眠唤醒或网络切换导致校内域名无法解析时，可一键清理残留路由并重建零信任隧道。" }),
     ])
 }
 
@@ -204,8 +153,8 @@ pub fn build_native_snapshot(win: &WorkbenchWindow) -> Value {
         .collect();
 
     json!({
-        "abi_version": HOST_ABI_VERSION, "route": route_str, "locale": locale_str,
-        "scheme": scheme_str, "accent_hex": accent_hex,
+        "abi_version": HOST_ABI_VERSION, "route": route_str, "settings_tab": vm.version_page.tab.as_str(),
+        "locale": locale_str, "scheme": scheme_str, "accent_hex": accent_hex,
         "shell_presence": vm.shell_presence.as_token(),
         "shows_dock": vm.shell_presence.shows_dock(), "shows_menu_bar": vm.shell_presence.shows_menu_bar(),
         "launch_at_login": vm.launch_at_login, "auto_check_updates": vm.sparkle_config.automatic_checks,
@@ -219,6 +168,7 @@ pub fn build_native_snapshot(win: &WorkbenchWindow) -> Value {
             "可在右上角 macOS 菜单栏固定 4 个最常用的校内服务槽位，点击右侧服务行的「固定」即可轮换槽位。"
         },
         "status": build_status_snapshot(win, en),
+        "version_page": build_version_page_snapshot(vm, en),
         "menu_bar_pins": pins, "categories": categories, "settings_rows": build_settings_rows(win, en),
     })
 }
@@ -246,7 +196,18 @@ pub fn dispatch_window_request(win: &mut WorkbenchWindow, request_bytes: &[u8]) 
         "toggle_settings" => win.vm.toggle_settings(),
         "set_route" => {
             let Some(r) = str_arg("route") else { return err_envelope("missing 'route'"); };
-            win.vm.route = if r == "settings" { WorkbenchRoute::Settings } else { WorkbenchRoute::Workbench };
+            if r == "version" {
+                win.vm.route = WorkbenchRoute::Settings;
+                win.vm.version_page.tab = SettingsTab::Version;
+            } else if r == "settings" {
+                win.vm.route = WorkbenchRoute::Settings;
+            } else {
+                win.vm.route = WorkbenchRoute::Workbench;
+            }
+        }
+        "set_settings_tab" => {
+            win.vm.route = WorkbenchRoute::Settings;
+            win.vm.version_page.tab = SettingsTab::from_token(str_arg("tab").unwrap_or_default());
         }
         "activate_shortcut" => {
             let Some(id) = str_arg("id") else { return err_envelope("missing 'id'"); };
@@ -286,7 +247,21 @@ pub fn dispatch_window_request(win: &mut WorkbenchWindow, request_bytes: &[u8]) 
             let Some(on) = req.get("enabled").and_then(Value::as_bool) else { return err_envelope("missing 'enabled'"); };
             win.vm.set_auto_check_updates(on);
         }
-        "check_for_updates" => win.vm.check_for_updates(),
+        "check_for_updates" => {
+            if req.get("open_version_tab").and_then(Value::as_bool) == Some(true) {
+                win.vm.route = WorkbenchRoute::Settings;
+                win.vm.version_page.tab = SettingsTab::Version;
+            }
+            win.trigger_update_check();
+        }
+        "open_releases_page" => { win.actor.send(SessionCommand::OpenBrowserUrl(GITHUB_RELEASES_PAGE_URL.to_string())); }
+        "open_update_download" => {
+            let url = match &win.vm.sparkle_state {
+                SparkleUpdateState::UpdateAvailable(item) => item.download_url.clone(),
+                _ => win.vm.version_page.download_url_or_releases().to_string(),
+            };
+            win.actor.send(SessionCommand::OpenBrowserUrl(url));
+        }
         "set_locale" => {
             let Some(loc) = str_arg("locale") else { return err_envelope("missing 'locale'"); };
             win.vm.set_locale(if loc == "en-US" { UiLocale::EnUs } else { UiLocale::ZhCn });
@@ -315,11 +290,12 @@ pub fn dispatch_window_request(win: &mut WorkbenchWindow, request_bytes: &[u8]) 
 mod tests {
     use super::*;
     use crate::tunnel_actor::TunnelHandle;
+    use crate::version_page::parse_github_latest_release;
     use szu_host_macos::{CLIENT_ABI_VERSION, NativeHostCallbacks, c_abi_roundtrip_for_test};
 
     #[test]
     fn host_api_enforces_info_tip_separation_and_c_abi_roundtrip() {
-        let (handle, _rx) = TunnelHandle::channel();
+        let (handle, rx) = TunnelHandle::channel();
         let mut win = WorkbenchWindow::new(handle);
         let snap = build_native_snapshot(&win);
         assert_eq!(snap["abi_version"], HOST_ABI_VERSION);
@@ -349,6 +325,21 @@ mod tests {
 
         let err: Value = serde_json::from_str(&dispatch_window_request(&mut win, br#"{"op":"unknown_op"}"#)).unwrap();
         assert_eq!(err["ok"], false);
+
+        let r3: Value = serde_json::from_str(&dispatch_window_request(&mut win, br#"{"op":"set_settings_tab","tab":"version"}"#)).unwrap();
+        assert_eq!(r3["value"]["route"], "settings");
+        assert_eq!(r3["value"]["settings_tab"], "version");
+        assert_eq!(r3["value"]["version_page"]["version"], APP_VERSION);
+
+        let r4: Value = serde_json::from_str(&dispatch_window_request(&mut win, br#"{"op":"check_for_updates","open_version_tab":true}"#)).unwrap();
+        assert_eq!(r4["value"]["version_page"]["is_checking"], true);
+        assert!(matches!(rx.try_recv(), Ok(SessionCommand::CheckForUpdates)));
+
+        let newer = br#"{"tag_name":"v0.3.0","html_url":"https://github.com/semantic-craft/szu-securelink-lite/releases/tag/v0.3.0","published_at":"2026-11-20T00:00:00Z","body":"Notes"}"#;
+        win.apply_session_event(SessionEvent::UpdateCheckFinished(parse_github_latest_release(newer, APP_VERSION, "12:30")));
+        let after = build_native_snapshot(&win);
+        assert_eq!(after["version_page"]["has_update"], true);
+        assert_eq!(after["version_page"]["changelog"][0]["is_remote_new"], true);
 
         let (h2, _rx2) = TunnelHandle::channel();
         let mut abi_win = WorkbenchWindow::new(h2);

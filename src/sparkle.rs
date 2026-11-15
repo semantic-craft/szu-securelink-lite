@@ -130,7 +130,7 @@ pub enum SparkleUpdateState {
     },
 }
 
-fn parse_semver(ver: &str) -> Option<(u32, u32, u32)> {
+pub(crate) fn parse_semver(ver: &str) -> Option<(u32, u32, u32)> {
     let clean = ver.trim().strip_prefix('v').unwrap_or(ver.trim());
     let mut parts = clean.split('.');
     let major = parts.next()?.parse::<u32>().ok()?;

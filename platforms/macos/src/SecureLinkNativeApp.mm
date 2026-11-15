@@ -80,6 +80,8 @@
 }
 @end
 
+#include "VersionPageView.h"
+
 @interface WorkbenchRootView : NSView
 @end
 @implementation WorkbenchRootView
@@ -204,6 +206,13 @@
     NSMenuItem *appMenuItem = [[NSMenuItem alloc] init];
     [menubar addItem:appMenuItem];
     NSMenu *appMenu = [[NSMenu alloc] initWithTitle:@"荔连"];
+
+    NSMenuItem *aboutItem = [[NSMenuItem alloc] initWithTitle:@"关于 荔连"
+                                                       action:@selector(onMenuOpenAbout:)
+                                                keyEquivalent:@""];
+    aboutItem.target = self;
+    [appMenu addItem:aboutItem];
+    [appMenu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *showItem = [[NSMenuItem alloc] initWithTitle:@"打开主工作台窗口"
                                                       action:@selector(onMenuShowWindow:)
@@ -736,8 +745,44 @@
 }
 
 - (void)rebuildSettingsBody:(NSDictionary *)snap en:(BOOL)en accentColor:(NSColor *)accentColor {
-    (void)accentColor;
     [self clearSubviews:self.bodyContainer];
+
+    NSSegmentedControl *seg = [NSSegmentedControl segmentedControlWithLabels:@[
+        en ? @"General" : @"常规设置",
+        en ? @"Version & Updates" : @"版本与更新",
+    ] trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(onSettingsTabChanged:)];
+    seg.translatesAutoresizingMaskIntoConstraints = NO;
+    seg.controlSize = NSControlSizeRegular;
+    BOOL isVersionTab = [snap[@"settings_tab"] isEqualToString:@"version"];
+    seg.selectedSegment = isVersionTab ? 1 : 0;
+    [self.bodyContainer addSubview:seg];
+    [NSLayoutConstraint activateConstraints:@[
+        [seg.topAnchor constraintEqualToAnchor:self.bodyContainer.topAnchor],
+        [seg.centerXAnchor constraintEqualToAnchor:self.bodyContainer.centerXAnchor],
+    ]];
+
+    NSSwitch *autoUpdSwitch = [[NSSwitch alloc] initWithFrame:NSZeroRect];
+    autoUpdSwitch.controlSize = NSControlSizeSmall;
+    autoUpdSwitch.state = [snap[@"auto_check_updates"] boolValue] ? NSControlStateValueOn : NSControlStateValueOff;
+    autoUpdSwitch.target = self;
+    autoUpdSwitch.action = @selector(onAutoUpdateToggled:);
+    NSView *rAutoUpd = [self makeSettingsRowWithKey:@"auto_check_updates" control:autoUpdSwitch];
+
+    if (isVersionTab) {
+        NSView *versionView = MSIMEBuildVersionPageView(
+            snap, en, accentColor, rAutoUpd, self,
+            @selector(onCheckUpdatesClicked:),
+            @selector(onDownloadUpdateClicked:),
+            @selector(onOpenReleasesClicked:));
+        [self.bodyContainer addSubview:versionView];
+        [NSLayoutConstraint activateConstraints:@[
+            [versionView.topAnchor constraintEqualToAnchor:seg.bottomAnchor constant:12.0],
+            [versionView.leadingAnchor constraintEqualToAnchor:self.bodyContainer.leadingAnchor],
+            [versionView.trailingAnchor constraintEqualToAnchor:self.bodyContainer.trailingAnchor],
+            [versionView.bottomAnchor constraintEqualToAnchor:self.bodyContainer.bottomAnchor],
+        ]];
+        return;
+    }
 
     // Card 1: System Presence & Startup (`NSPopUpButton` + `NSSwitch`)
     NSBox *presenceCard = MSIMEMakeCardBox();
@@ -825,24 +870,17 @@
     NSBox *opsCard = MSIMEMakeCardBox();
     NSView *oContent = opsCard.contentView;
 
-    NSButton *checkUpdBtn = [NSButton buttonWithTitle:(en ? @"Check for Updates" : @"立即检查更新")
-                                               target:self
-                                               action:@selector(onCheckUpdatesClicked:)];
-    checkUpdBtn.bezelStyle = NSBezelStyleRounded;
-
-    NSSwitch *autoUpdSwitch = [[NSSwitch alloc] initWithFrame:NSZeroRect];
-    autoUpdSwitch.controlSize = NSControlSizeSmall;
-    autoUpdSwitch.state = [snap[@"auto_check_updates"] boolValue] ? NSControlStateValueOn : NSControlStateValueOff;
-    autoUpdSwitch.target = self;
-    autoUpdSwitch.action = @selector(onAutoUpdateToggled:);
+    NSButton *openVerBtn = [NSButton buttonWithTitle:(en ? @"Version & Updates…" : @"版本与更新…")
+                                              target:self
+                                              action:@selector(onOpenVersionTabClicked:)];
+    openVerBtn.bezelStyle = NSBezelStyleRounded;
 
     NSButton *repairBtn = [NSButton buttonWithTitle:(en ? @"↻ Reset Routes & DNS" : @"↻ 重置路由与 DNS")
                                              target:self
                                              action:@selector(onRepairClicked:)];
     repairBtn.bezelStyle = NSBezelStyleRounded;
 
-    NSView *rUpdStatus = [self makeSettingsRowWithKey:@"update_status" control:checkUpdBtn];
-    NSView *rAutoUpd = [self makeSettingsRowWithKey:@"auto_check_updates" control:autoUpdSwitch];
+    NSView *rUpdStatus = [self makeSettingsRowWithKey:@"update_status" control:openVerBtn];
     NSView *rHelper = [self makeSettingsRowWithKey:@"tunnel_helper" control:repairBtn];
 
     [oContent addSubview:rUpdStatus];
@@ -868,7 +906,7 @@
     [self.bodyContainer addSubview:opsCard];
 
     [NSLayoutConstraint activateConstraints:@[
-        [presenceCard.topAnchor constraintEqualToAnchor:self.bodyContainer.topAnchor],
+        [presenceCard.topAnchor constraintEqualToAnchor:seg.bottomAnchor constant:12.0],
         [presenceCard.leadingAnchor constraintEqualToAnchor:self.bodyContainer.leadingAnchor],
         [presenceCard.trailingAnchor constraintEqualToAnchor:self.bodyContainer.trailingAnchor],
 
@@ -889,16 +927,29 @@
     guideBtn.bordered = NO;
     guideBtn.font = [NSFont systemFontOfSize:11.5 weight:NSFontWeightRegular];
 
+    NSString *verTitle = [NSString stringWithFormat:@"v%@", snap[@"app_version"] ?: @"0.2.2"];
+    NSButton *verBtn = [NSButton buttonWithTitle:verTitle
+                                          target:self
+                                          action:@selector(onOpenVersionTabClicked:)];
+    verBtn.translatesAutoresizingMaskIntoConstraints = NO;
+    verBtn.bezelStyle = NSBezelStyleInline;
+    verBtn.bordered = NO;
+    verBtn.font = [NSFont monospacedDigitSystemFontOfSize:11.5 weight:NSFontWeightRegular];
+    verBtn.contentTintColor = [NSColor secondaryLabelColor];
+
     NSTextField *attrLbl = MSIMEMakeLabel(
         snap[@"attribution"] ?: @"深圳大学法律人工智能实训实验室",
         11.5, NSFontWeightRegular, [NSColor secondaryLabelColor]);
 
     [self.footerContainer addSubview:guideBtn];
+    [self.footerContainer addSubview:verBtn];
     [self.footerContainer addSubview:attrLbl];
 
     [NSLayoutConstraint activateConstraints:@[
         [guideBtn.leadingAnchor constraintEqualToAnchor:self.footerContainer.leadingAnchor],
         [guideBtn.centerYAnchor constraintEqualToAnchor:self.footerContainer.centerYAnchor],
+        [verBtn.leadingAnchor constraintEqualToAnchor:guideBtn.trailingAnchor constant:12.0],
+        [verBtn.centerYAnchor constraintEqualToAnchor:self.footerContainer.centerYAnchor],
         [attrLbl.trailingAnchor constraintEqualToAnchor:self.footerContainer.trailingAnchor],
         [attrLbl.centerYAnchor constraintEqualToAnchor:self.footerContainer.centerYAnchor],
     ]];
@@ -912,6 +963,13 @@
 - (void)onToggleNetworkDetails:(id)sender { (void)sender; [self dispatchOp:@{@"op": @"toggle_network_details"}]; }
 - (void)onGuideClicked:(id)sender { (void)sender; [self dispatchOp:@{@"op": @"open_guide"}]; }
 - (void)onCheckUpdatesClicked:(id)sender { (void)sender; [self dispatchOp:@{@"op": @"check_for_updates"}]; }
+- (void)onDownloadUpdateClicked:(id)sender { (void)sender; [self dispatchOp:@{@"op": @"open_update_download"}]; }
+- (void)onOpenReleasesClicked:(id)sender { (void)sender; [self dispatchOp:@{@"op": @"open_releases_page"}]; }
+- (void)onOpenVersionTabClicked:(id)sender { (void)sender; [self dispatchOp:@{@"op": @"set_settings_tab", @"tab": @"version"}]; }
+- (void)onSettingsTabChanged:(NSSegmentedControl *)sender {
+    NSString *tab = (sender.selectedSegment == 1) ? @"version" : @"general";
+    [self dispatchOp:@{@"op": @"set_settings_tab", @"tab": tab}];
+}
 
 - (void)onShortcutOpenButton:(NSButton *)sender {
     NSString *sid = sender.identifier ?: @"";
@@ -983,10 +1041,14 @@
     [self dispatchOp:@{@"op": @"set_route", @"route": @"settings"}];
     MSIMEPresentWindow(self.window);
 }
+- (void)onMenuOpenAbout:(id)sender {
+    (void)sender;
+    [self dispatchOp:@{@"op": @"set_settings_tab", @"tab": @"version"}];
+    MSIMEPresentWindow(self.window);
+}
 - (void)onMenuCheckUpdates:(id)sender {
     (void)sender;
-    [self dispatchOp:@{@"op": @"check_for_updates"}];
-    [self dispatchOp:@{@"op": @"set_route", @"route": @"settings"}];
+    [self dispatchOp:@{@"op": @"check_for_updates", @"open_version_tab": @YES}];
     MSIMEPresentWindow(self.window);
 }
 - (void)onMenuQuit:(id)sender {

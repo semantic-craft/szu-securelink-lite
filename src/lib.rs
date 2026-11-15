@@ -20,5 +20,6 @@ pub mod shortcuts;
 pub mod sparkle;
 pub mod tray_bridge;
 pub mod tunnel_actor;
+pub mod version_page;
 #[cfg(test)]
 mod tests;

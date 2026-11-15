@@ -6,10 +6,9 @@
 #![forbid(unsafe_code)]
 
 use crate::shortcuts::{CampusShortcut, ShortcutCategory, default_shortcuts, extract_hosts, valid_url};
-use crate::sparkle::{
-    SparkleAppcastItem, SparkleConfig, SparkleUpdateState, format_package_size_mb, is_newer_version,
-};
+use crate::sparkle::{SparkleAppcastItem, SparkleConfig, SparkleUpdateState, is_newer_version};
 use crate::tray_bridge::{AppPreferences, ShellPresence, set_launch_at_login};
+use crate::version_page::{UpdateCheckResult, VersionPageState, format_update_status_line};
 
 /// Official Chinese display name for the SZU SecureLink desktop client.
 pub const APP_CHINESE_NAME: &str = "荔连";
@@ -18,12 +17,7 @@ pub const ABOUT_ATTRIBUTION_TEXT: &str = "深圳大学法律人工智能实训�
 /// Application version string displayed in the About page and update check.
 pub const APP_VERSION: &str = "0.2.2";
 /// Default 4 user-pinned campus services in the macOS menu bar popover.
-pub const DEFAULT_MENU_BAR_PIN_IDS: [&str; 4] = [
-    "szu-reimburse-system",
-    "szu-finance-sso",
-    "szu-cnki-sso",
-    "szu-ehall",
-];
+pub const DEFAULT_MENU_BAR_PIN_IDS: [&str; 4] = ["szu-reimburse-system", "szu-finance-sso", "szu-cnki-sso", "szu-ehall"];
 
 /// Supported UI copy locales (`zh-CN` primary, `en-US` secondary).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +96,7 @@ pub struct WorkbenchViewModel {
     pub last_opened_url: Option<String>,
     pub sparkle_config: SparkleConfig,
     pub sparkle_state: SparkleUpdateState,
+    pub version_page: VersionPageState,
     pub collapsed_categories: Vec<ShortcutCategory>,
     pub shell_presence: ShellPresence,
     pub launch_at_login: bool,
@@ -136,6 +131,7 @@ impl WorkbenchViewModel {
             last_opened_url: None,
             sparkle_config,
             sparkle_state: SparkleUpdateState::UpToDate { version: APP_VERSION.to_string() },
+            version_page: VersionPageState::default(),
             collapsed_categories: vec![ShortcutCategory::AcademicDatabases, ShortcutCategory::Custom],
             shell_presence: prefs.shell_presence,
             launch_at_login: prefs.launch_at_login,
@@ -183,17 +179,11 @@ impl WorkbenchViewModel {
         #[cfg(not(test))]
         let ok = set_launch_at_login(enabled);
         #[cfg(test)]
-        let ok = {
-            let _ = set_launch_at_login;
-            true
-        };
-        if ok {
-            self.launch_at_login = enabled;
-            self.save_preferences();
-        }
+        let ok = { let _ = set_launch_at_login; true };
+        if ok { self.launch_at_login = enabled; self.save_preferences(); }
     }
 
-    /// Updates automatic Sparkle update checking and persists preferences.
+    /// Updates automatic update checking and persists preferences.
     pub fn set_auto_check_updates(&mut self, enabled: bool) {
         self.sparkle_config.automatic_checks = enabled;
         self.save_preferences();
@@ -201,13 +191,7 @@ impl WorkbenchViewModel {
 
     /// Persists the current [`AppPreferences`] to disk.
     pub fn save_preferences(&self) {
-        let prefs = AppPreferences {
-            shell_presence: self.shell_presence,
-            launch_at_login: self.launch_at_login,
-            auto_check_updates: self.sparkle_config.automatic_checks,
-            locale: self.locale,
-            scheme: self.scheme,
-        };
+        let prefs = AppPreferences { shell_presence: self.shell_presence, launch_at_login: self.launch_at_login, auto_check_updates: self.sparkle_config.automatic_checks, locale: self.locale, scheme: self.scheme };
         #[cfg(not(test))]
         prefs.save_persisted();
         #[cfg(test)]
@@ -216,60 +200,78 @@ impl WorkbenchViewModel {
 
     /// Runs a version update check and opens or updates the Settings state.
     pub fn check_for_updates(&mut self) {
+        self.version_page.last_error_zh = None;
+        self.version_page.last_error_en = None;
         self.sparkle_state = SparkleUpdateState::UpToDate { version: APP_VERSION.to_string() };
+        self.sync_update_status_text();
+    }
+
+    /// Marks the updater as checking if not already in flight, returning `true` when started.
+    pub fn begin_update_check(&mut self) -> bool {
+        if matches!(self.sparkle_state, SparkleUpdateState::Checking) { return false; }
+        self.sparkle_state = SparkleUpdateState::Checking;
+        self.version_page.last_error_zh = None;
+        self.version_page.last_error_en = None;
+        self.sync_update_status_text();
+        true
+    }
+
+    /// Applies a completed GitHub Releases check without forging Ed25519 Sparkle signatures.
+    pub fn apply_update_check_result(&mut self, result: UpdateCheckResult) {
+        self.version_page.last_error_zh = None;
+        self.version_page.last_error_en = None;
+        match result {
+            UpdateCheckResult::UpToDate { version, checked_at_hm, remote } => {
+                self.version_page.last_checked_hm = Some(checked_at_hm);
+                self.version_page.latest_remote = remote;
+                self.sparkle_state = SparkleUpdateState::UpToDate { version };
+            }
+            UpdateCheckResult::UpdateAvailable { checked_at_hm, remote } => {
+                self.version_page.last_checked_hm = Some(checked_at_hm);
+                self.version_page.latest_remote = Some(remote);
+                self.sparkle_state = SparkleUpdateState::Idle;
+            }
+            UpdateCheckResult::Failed { checked_at_hm, reason_zh, reason_en } => {
+                self.version_page.last_checked_hm = Some(checked_at_hm);
+                self.version_page.last_error_zh = Some(reason_zh.clone());
+                self.version_page.last_error_en = Some(reason_en.clone());
+                self.sparkle_state = SparkleUpdateState::Failed { reason: if self.locale == UiLocale::EnUs { reason_en } else { reason_zh } };
+            }
+        }
         self.sync_update_status_text();
     }
 
     /// Evaluates a signed Sparkle 2.x appcast item against `APP_VERSION`.
     pub fn apply_sparkle_appcast(&mut self, item: SparkleAppcastItem) -> bool {
+        self.version_page.last_error_zh = None;
+        self.version_page.last_error_en = None;
         if item.validate().is_err() {
-            self.sparkle_state = SparkleUpdateState::Failed {
-                reason: if self.locale == UiLocale::EnUs { "Update signature or metadata invalid".to_string() } else { "更新包签名或元数据校验未通过".to_string() },
-            };
+            let reason = if self.locale == UiLocale::EnUs { "Update signature or metadata invalid" } else { "更新包签名或元数据校验未通过" };
+            self.sparkle_state = SparkleUpdateState::Failed { reason: reason.to_string() };
             self.sync_update_status_text();
             return false;
         }
-        if is_newer_version(APP_VERSION, &item.version) {
-            self.sparkle_state = SparkleUpdateState::UpdateAvailable(item);
+        self.sparkle_state = if is_newer_version(APP_VERSION, &item.version) {
+            SparkleUpdateState::UpdateAvailable(item)
         } else {
-            self.sparkle_state = SparkleUpdateState::UpToDate { version: APP_VERSION.to_string() };
-        }
+            SparkleUpdateState::UpToDate { version: APP_VERSION.to_string() }
+        };
         self.sync_update_status_text();
         true
     }
 
     fn sync_update_status_text(&mut self) {
-        let en = self.locale == UiLocale::EnUs;
-        self.update_status = match &self.sparkle_state {
-            SparkleUpdateState::Idle | SparkleUpdateState::Checking => {
-                if en { "Checking for updates via Sparkle…" } else { "正在通过 Sparkle 检查更新…" }.to_string()
-            }
-            SparkleUpdateState::UpToDate { version } => {
-                if en { format!("Up to date (v{version})") } else { format!("当前已是最新版本（v{version}）") }
-            }
-            SparkleUpdateState::UpdateAvailable(item) => {
-                let size = format_package_size_mb(item.length_bytes).unwrap_or_default();
-                if en { format!("Update available: v{} ({size})", item.version) } else { format!("发现新版本 v{}（{size}）", item.version) }
-            }
-            SparkleUpdateState::Failed { reason } => reason.clone(),
-        };
+        self.update_status = format_update_status_line(&self.sparkle_state, &self.version_page, self.locale == UiLocale::EnUs);
     }
 
     /// Toggles between the main Workbench view and the Settings page.
     pub fn toggle_settings(&mut self) {
-        self.route = match self.route {
-            WorkbenchRoute::Workbench => WorkbenchRoute::Settings,
-            WorkbenchRoute::Settings => WorkbenchRoute::Workbench,
-        };
+        self.route = if self.route == WorkbenchRoute::Workbench { WorkbenchRoute::Settings } else { WorkbenchRoute::Workbench };
     }
 
     /// Transitions the workbench to an active `utun` connected state and drains any queued shortcut.
     pub fn set_connected(&mut self, interface: &str, virtual_ipv4: &str) {
-        self.status = ConnectionStatus::Connected {
-            interface: interface.to_string(),
-            virtual_ipv4: virtual_ipv4.to_string(),
-            dns_server: "192.168.247.6".to_string(),
-        };
+        self.status = ConnectionStatus::Connected { interface: interface.to_string(), virtual_ipv4: virtual_ipv4.to_string(), dns_server: "192.168.247.6".to_string() };
         if let Some(pending_id) = self.pending_open_shortcut_id.take()
             && let Some(item) = self.shortcuts.iter().find(|s| s.id == pending_id)
         {
@@ -282,17 +284,10 @@ impl WorkbenchViewModel {
         let item = self.shortcuts.iter().find(|s| s.id == id)?;
         let (url, name) = (item.url.clone(), item.name.clone());
         match &self.status {
-            ConnectionStatus::Connected { .. } => {
-                self.last_opened_url = Some(url.clone());
-                Some(ShortcutLaunchOutcome::OpenedImmediately(url))
-            }
+            ConnectionStatus::Connected { .. } => { self.last_opened_url = Some(url.clone()); Some(ShortcutLaunchOutcome::OpenedImmediately(url)) }
             ConnectionStatus::Disconnected | ConnectionStatus::Connecting { .. } => {
                 self.pending_open_shortcut_id = Some(id.to_string());
-                let phase = if self.locale == UiLocale::EnUs {
-                    format!("Connecting campus network, will open \"{name}\" automatically…")
-                } else {
-                    format!("正在为您连接校园网，连上后自动打开「{name}」…")
-                };
+                let phase = if self.locale == UiLocale::EnUs { format!("Connecting campus network, will open \"{name}\" automatically…") } else { format!("正在为您连接校园网，连上后自动打开「{name}」…") };
                 self.status = ConnectionStatus::Connecting { phase };
                 Some(ShortcutLaunchOutcome::QueuedAfterConnect { shortcut_id: id.to_string(), url })
             }
@@ -379,17 +374,13 @@ impl WorkbenchViewModel {
     /// Returns all unique domains that should be pre-resolved via the in-tunnel DNS (`192.168.247.6`).
     #[must_use]
     pub fn in_tunnel_resolve_domains(&self) -> Vec<String> {
-        let mut domains = vec![
-            "www1.szu.edu.cn".to_string(), "authserver.szu.edu.cn".to_string(),
-            "ehall.szu.edu.cn".to_string(), "cwpt.szu.edu.cn".to_string(),
-            "oa.szu.edu.cn".to_string(), "www.lib.szu.edu.cn".to_string(),
-            "idp.szu.edu.cn".to_string(), "ezproxy.lib.szu.edu.cn".to_string(),
-            "accproxy.lib.szu.edu.cn".to_string(),
-        ];
+        let mut domains: Vec<String> = [
+            "www1.szu.edu.cn", "authserver.szu.edu.cn", "ehall.szu.edu.cn",
+            "cwpt.szu.edu.cn", "oa.szu.edu.cn", "www.lib.szu.edu.cn",
+            "idp.szu.edu.cn", "ezproxy.lib.szu.edu.cn", "accproxy.lib.szu.edu.cn",
+        ].into_iter().map(str::to_string).collect();
         for h in extract_hosts(&self.shortcuts) {
-            if !domains.contains(&h) && domains.len() < 32 {
-                domains.push(h);
-            }
+            if !domains.contains(&h) && domains.len() < 32 { domains.push(h); }
         }
         domains
     }
