@@ -35,15 +35,130 @@ final class ConnectionStateHolder: @unchecked Sendable {
     func get() -> CASConnectionFlow.State { lock.lock(); defer { lock.unlock() }; return value }
 }
 
+@MainActor final class MenuBarConnectionState: ObservableObject {
+    @Published private(set) var isConnected = false
+    func update(_ connected: Bool) {
+        if isConnected != connected {
+            isConnected = connected
+        }
+    }
+}
+
+@MainActor final class ShortcutCatalogStore: ObservableObject {
+    @Published private(set) var shortcuts: [CampusShortcut]
+    @Published private(set) var pinnedMenuBarIDs: [String]
+    let shortcutsURL: URL
+    let menuBarPinsURL: URL
+
+    static var defaultShortcutsFileURL: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return base.appendingPathComponent("SZUSecureLink/shortcuts.json")
+    }
+
+    static var defaultMenuBarPinsFileURL: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return base.appendingPathComponent("SZUSecureLink/menubar-pins.json")
+    }
+
+    init(
+        shortcutsURL: URL = ShortcutCatalogStore.defaultShortcutsFileURL,
+        menuBarPinsURL: URL = ShortcutCatalogStore.defaultMenuBarPinsFileURL
+    ) {
+        self.shortcutsURL = shortcutsURL
+        self.menuBarPinsURL = menuBarPinsURL
+        let loaded = CampusShortcuts.load(from: shortcutsURL)
+        self.shortcuts = loaded
+        self.pinnedMenuBarIDs = MenuBarPinStore.load(from: menuBarPinsURL, available: loaded)
+    }
+
+    var menuBarPinnedShortcuts: [CampusShortcut] {
+        let normalized = MenuBarPinStore.normalize(pinnedMenuBarIDs, available: shortcuts)
+        return normalized.compactMap { id in shortcuts.first(where: { $0.id == id }) }
+    }
+
+    func isPinnedToMenuBar(_ id: String) -> Bool {
+        MenuBarPinStore.normalize(pinnedMenuBarIDs, available: shortcuts).contains(id)
+    }
+
+    func syncWithWorkbench(_ workbenchResources: [BackendUrlResource]) {
+        shortcuts = CampusShortcuts.mergeWithDefaults(saved: shortcuts, workbench: workbenchResources)
+        CampusShortcuts.save(shortcuts, to: shortcutsURL)
+    }
+
+    func toggleFavoriteShortcut(_ id: String) {
+        guard let index = shortcuts.firstIndex(where: { $0.id == id }) else { return }
+        shortcuts[index].isFavorite.toggle()
+        CampusShortcuts.save(shortcuts, to: shortcutsURL)
+    }
+
+    @discardableResult func addCustomShortcut(name: String, url: String) -> Bool {
+        guard let item = CampusShortcuts.makeCustomShortcut(name: name, url: url),
+              shortcuts.count < CampusShortcuts.maximumShortcuts else { return false }
+        shortcuts.append(item)
+        CampusShortcuts.save(shortcuts, to: shortcutsURL)
+        return true
+    }
+
+    func removeCustomShortcut(_ id: String) {
+        guard shortcuts.contains(where: { $0.id == id && !$0.isBuiltIn }) else { return }
+        shortcuts.removeAll { $0.id == id && !$0.isBuiltIn }
+        CampusShortcuts.save(shortcuts, to: shortcutsURL)
+    }
+
+    func toggleMenuBarPin(_ id: String) {
+        let updated = MenuBarPinStore.togglePin(id: id, current: pinnedMenuBarIDs, available: shortcuts)
+        guard updated != pinnedMenuBarIDs else { return }
+        pinnedMenuBarIDs = updated
+        MenuBarPinStore.save(pinnedMenuBarIDs, to: menuBarPinsURL)
+    }
+}
+
+@MainActor final class WorkbenchChromeStore: ObservableObject {
+    @Published var isEnglishLocale = false
+    @Published var showAboutSheet = false
+    @Published var updateCheckFeedback: String?
+    let aboutMetadata = AboutMetadata.current
+    let sparkleConfig = SparkleConfiguration.current
+    static let accentColor = Color(red: 0x8C / 255.0, green: 0x22 / 255.0, blue: 0x32 / 255.0)
+
+    func checkForUpdates() {
+        updateCheckFeedback = isEnglishLocale
+            ? "Up to date (v\(aboutMetadata.version), Sparkle EdDSA verified)"
+            : aboutMetadata.updateStatusText
+    }
+}
+
 @MainActor final class SessionModel: ObservableObject {
-    @Published var status: TunnelStatus = .unavailable
+    @Published var status: TunnelStatus = .unavailable {
+        didSet {
+            connectionState.update(status == .connected)
+        }
+    }
     @Published var running = false
-    @Published var policy = PolicyObservation()
+    var policy = PolicyObservation()
     @Published var detail = "点击『登录深大 CAS 并建立零信任隧道』即可独立接入深圳大学校园网。" {
         didSet {
             if status == .connecting, detail != oldValue { emitWorkerLine("PHASE: \(detail)") }
         }
     }
+    let connectionState = MenuBarConnectionState()
+    var isConnected: Bool { connectionState.isConnected }
+    let catalog: ShortcutCatalogStore?
+    let chrome: WorkbenchChromeStore?
+    private let shortcutsFallbackURL: URL
+
+    init(
+        catalog: ShortcutCatalogStore? = nil,
+        chrome: WorkbenchChromeStore? = nil,
+        shortcutsFallbackURL: URL = ShortcutCatalogStore.defaultShortcutsFileURL
+    ) {
+        self.catalog = catalog
+        self.chrome = chrome
+        self.shortcutsFallbackURL = shortcutsFallbackURL
+    }
+
     let standaloneDefaultMode: Bool = {
         let args = ProcessInfo.processInfo.arguments
         return !args.contains("--cas-connect-test")
@@ -97,39 +212,12 @@ final class ConnectionStateHolder: @unchecked Sendable {
     private var financeHomepageValidated = false
     private var financeCampusValidated = false
     private var financeTunnelStatus = "disconnected"
-    @Published var workbenchResources: [BackendUrlResource] = []
+    var workbenchResources: [BackendUrlResource] = []
     private var workbenchFailure: String?
-    @Published var shortcuts: [CampusShortcut] = CampusShortcuts.load(from: SessionModel.shortcutsFileURL)
-    @Published var pinnedMenuBarIDs: [String] = MenuBarPinStore.load(
-        from: SessionModel.menuBarPinsFileURL,
-        available: CampusShortcuts.load(from: SessionModel.shortcutsFileURL)
-    )
-    @Published var pendingShortcutAfterConnect: CampusShortcut?
-    @Published var uiScheme: String = "crimson"
-    @Published var isEnglishLocale = false
-    @Published var showNetworkDetails = false
-    @Published var showShortcutManager = false
-    @Published var showAboutSheet = false
-    @Published var updateCheckFeedback: String?
-    let aboutMetadata = AboutMetadata.current
-    let sparkleConfig = SparkleConfiguration.current
-    @Published var customShortcutName = ""
-    @Published var customShortcutURL = ""
+    var pendingShortcutAfterConnect: CampusShortcut?
     @Published var activeTunnelInterface: String?
     @Published var activeVirtualIPv4: String?
     private var activeDataSessionStop: (@Sendable () -> Void)?
-
-    static var shortcutsFileURL: URL {
-        let base = (try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true))
-            ?? FileManager.default.temporaryDirectory
-        return base.appendingPathComponent("SZUSecureLink/shortcuts.json")
-    }
-
-    static var menuBarPinsFileURL: URL {
-        let base = (try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true))
-            ?? FileManager.default.temporaryDirectory
-        return base.appendingPathComponent("SZUSecureLink/menubar-pins.json")
-    }
 
     static let campusRedirectChainDomains: [String] = [
         "www1.szu.edu.cn",
@@ -143,51 +231,6 @@ final class ConnectionStateHolder: @unchecked Sendable {
         "accproxy.lib.szu.edu.cn"
     ]
 
-    func syncShortcutsWithWorkbench() {
-        shortcuts = CampusShortcuts.mergeWithDefaults(saved: shortcuts, workbench: workbenchResources)
-        CampusShortcuts.save(shortcuts, to: Self.shortcutsFileURL)
-    }
-
-    func toggleFavoriteShortcut(_ id: String) {
-        guard let index = shortcuts.firstIndex(where: { $0.id == id }) else { return }
-        shortcuts[index].isFavorite.toggle()
-        CampusShortcuts.save(shortcuts, to: Self.shortcutsFileURL)
-    }
-
-    func addCustomShortcut() {
-        guard let item = CampusShortcuts.makeCustomShortcut(name: customShortcutName, url: customShortcutURL),
-              shortcuts.count < CampusShortcuts.maximumShortcuts else { return }
-        shortcuts.append(item)
-        customShortcutName = ""
-        customShortcutURL = ""
-        CampusShortcuts.save(shortcuts, to: Self.shortcutsFileURL)
-    }
-
-    func removeCustomShortcut(_ id: String) {
-        shortcuts.removeAll { $0.id == id && !$0.isBuiltIn }
-        CampusShortcuts.save(shortcuts, to: Self.shortcutsFileURL)
-    }
-
-    func checkForUpdates() {
-        updateCheckFeedback = isEnglishLocale
-            ? "Up to date (v\(aboutMetadata.version), Sparkle EdDSA verified)"
-            : aboutMetadata.updateStatusText
-    }
-
-    var menuBarPinnedShortcuts: [CampusShortcut] {
-        let normalized = MenuBarPinStore.normalize(pinnedMenuBarIDs, available: shortcuts)
-        return normalized.compactMap { id in shortcuts.first(where: { $0.id == id }) }
-    }
-
-    func isPinnedToMenuBar(_ id: String) -> Bool {
-        MenuBarPinStore.normalize(pinnedMenuBarIDs, available: shortcuts).contains(id)
-    }
-
-    func toggleMenuBarPin(_ id: String) {
-        pinnedMenuBarIDs = MenuBarPinStore.togglePin(id: id, current: pinnedMenuBarIDs, available: shortcuts)
-        MenuBarPinStore.save(pinnedMenuBarIDs, to: Self.menuBarPinsFileURL)
-    }
-
     func openOrConnectShortcut(_ item: CampusShortcut) {
         guard let url = URL(string: item.url) else { return }
         if status == .connected {
@@ -195,7 +238,8 @@ final class ConnectionStateHolder: @unchecked Sendable {
             return
         }
         pendingShortcutAfterConnect = item
-        detail = isEnglishLocale
+        let english = chrome?.isEnglishLocale ?? false
+        detail = english
             ? "Connecting to campus network; will open \"\(item.name)\" automatically once connected."
             : "正在为您连接校园网，连接成功后将自动打开「\(item.name)」。"
         if !running && !awaitingCallback {
@@ -292,7 +336,7 @@ final class ConnectionStateHolder: @unchecked Sendable {
     let connectionTestEnabled = ProcessInfo.processInfo.arguments.contains("--cas-connect-test")
     var diagnosticEnabled: Bool { backendTestEnabled || connectionTestEnabled || ProcessInfo.processInfo.arguments.contains("--cas-preauthentication-test") }
     @Published var awaitingCallback = false
-    @Published var connectionPhase = "idle"
+    var connectionPhase = "idle"
     private var phases: [String] = []
     private var authenticationShape: [String: String] = [:]
     private var endpointShape: [String: String] = [:]
@@ -332,7 +376,7 @@ final class ConnectionStateHolder: @unchecked Sendable {
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         } catch { detail = "无法保存本次测试状态，请检查报告目录。" }
     }
-    private func setConnectionPhase(_ phase: String) {
+    func setConnectionPhase(_ phase: String) {
         connectionPhase = phase
         if phases.last != phase { phases.append(phase); if phases.count > 64 { phases.removeFirst() } }
         writeReport()
@@ -601,7 +645,7 @@ final class ConnectionStateHolder: @unchecked Sendable {
                         configuration = fetchedConfig
                         self.workbenchResources = resourceCollection.resources
                         self.workbenchFailure = resourceCollection.failure
-                        self.syncShortcutsWithWorkbench()
+                        self.catalog?.syncWithWorkbench(self.workbenchResources)
                     }
                     let receipt = try JSONEncoder().encode(configuration.receipt)
                     self.backendConfigurationReceipt = (try JSONSerialization.jsonObject(with: receipt)) as? [String: Any] ?? [:]
@@ -629,9 +673,10 @@ final class ConnectionStateHolder: @unchecked Sendable {
                         do {
                             var resolveDomains: [String] = []
                             var seenDomains: Set<String> = []
+                            let shortcutsForDomains = self.catalog?.shortcuts ?? CampusShortcuts.load(from: self.shortcutsFallbackURL)
                             let candidateHosts = Self.campusRedirectChainDomains
                                 + BackendResources.extractHosts(from: self.workbenchResources)
-                                + CampusShortcuts.extractHosts(from: self.shortcuts)
+                                + CampusShortcuts.extractHosts(from: shortcutsForDomains)
                             for domain in candidateHosts {
                                 if OpenVPNDataSession.validQueryName(domain),
                                    seenDomains.insert(domain).inserted,
@@ -681,7 +726,7 @@ final class ConnectionStateHolder: @unchecked Sendable {
                                                 if !refreshed.resources.isEmpty {
                                                     self.workbenchResources = refreshed.resources
                                                     self.workbenchFailure = nil
-                                                    self.syncShortcutsWithWorkbench()
+                                                    self.catalog?.syncWithWorkbench(self.workbenchResources)
                                                     self.writeReport()
                                                 } else if let failure = refreshed.failure {
                                                     self.workbenchFailure = failure
@@ -971,20 +1016,8 @@ final class ConnectionStateHolder: @unchecked Sendable {
         NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: "/Applications/SecureLink/SecureLink.app"), configuration: .init()) { _, _ in }
     }
     var hasStandaloneDataSession: Bool { dataSessionEngine != nil }
-    var policyText: String {
-        if policy.requiresReauthentication { return "部分资源需要二次认证，请打开官方客户端完成；隧道在线不代表资源已获授权。" }
-        switch policy.endpointCheck {
-        case .unknown: return "尚未确认端点安全检查结果。"
-        case .notRequired: return "服务报告当前未启用端点安全检查；这不等于检查通过。"
-        case .failed: return "端点安全检查服务返回错误，尚未完成检查。"
-        case .requested: return "服务要求重新安全检查，请打开官方客户端处理。"
-        case .running: return "官方服务正在检查端点安全状态。"
-        case .healthy: return "收到健康状态结果；资源授权仍由学校策略决定。"
-        case .needsAttention: return "端点安全检查需要处理，请打开官方客户端查看。"
-        }
-    }
-    var statusText: String {
-        if isEnglishLocale {
+    func statusText(english: Bool) -> String {
+        if english {
             switch status {
             case .connected: return "Connected to Campus Network"
             case .disconnected: return "Not Connected"
@@ -1003,13 +1036,17 @@ final class ConnectionStateHolder: @unchecked Sendable {
         case .unavailable: return "准备连接校园网"
         }
     }
-    var schemeAccentColor: Color {
-        Color(red: 0x8C / 255.0, green: 0x22 / 255.0, blue: 0x32 / 255.0)
-    }
 }
 
-enum MenuBarStatusIcon {
+@MainActor enum MenuBarStatusIcon {
+    private static let connectedIcon = buildImage(connected: true)
+    private static let disconnectedIcon = buildImage(connected: false)
+
     static func image(connected: Bool) -> NSImage {
+        connected ? connectedIcon : disconnectedIcon
+    }
+
+    private static func buildImage(connected: Bool) -> NSImage {
         let resourceName = connected ? "menubar-connected" : "menubar-disconnected"
         if let url = Bundle.main.url(forResource: resourceName, withExtension: "svg"),
            let bundled = NSImage(contentsOf: url) {
@@ -1059,6 +1096,21 @@ enum MenuBarStatusIcon {
     }
 }
 
+@MainActor final class AppCoordinator {
+    let catalog: ShortcutCatalogStore
+    let chrome: WorkbenchChromeStore
+    let session: SessionModel
+
+    init(
+        catalog: ShortcutCatalogStore = ShortcutCatalogStore(),
+        chrome: WorkbenchChromeStore = WorkbenchChromeStore()
+    ) {
+        self.catalog = catalog
+        self.chrome = chrome
+        self.session = SessionModel(catalog: catalog, chrome: chrome)
+    }
+}
+
 @main enum SecureLinkEntrypoint {
     @MainActor private static var headlessModel: SessionModel?
     static func main() {
@@ -1076,355 +1128,446 @@ enum MenuBarStatusIcon {
 }
 
 struct SecureLinkApp: App {
-    @StateObject private var model = SessionModel()
+    private let coordinator = AppCoordinator()
+
     var body: some Scene {
         Window("SZU SecureLink", id: "main") {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(spacing: 12) {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(model.schemeAccentColor)
-                        .frame(width: 34, height: 34)
-                        .overlay(
-                            Image(systemName: "building.columns.fill")
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundStyle(.white)
-                        )
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("SZU SecureLink")
-                            .font(.system(size: 18, weight: .semibold))
-                        Text(model.isEnglishLocale ? "Shenzhen University Campus Access" : "深圳大学校园网与常用服务")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button(model.isEnglishLocale ? "中文" : "EN") {
-                        model.isEnglishLocale.toggle()
-                    }
-                    .controlSize(.small)
-                }
-
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 10) {
-                        Circle()
-                            .fill(model.status == .connected ? Color(red: 0x2B / 255.0, green: 0x6E / 255.0, blue: 0x48 / 255.0) : Color.secondary.opacity(0.45))
-                            .frame(width: 10, height: 10)
-                        Text(model.statusText)
-                            .font(.system(size: 18, weight: .semibold))
-                        Spacer()
-                        if model.status == .connected {
-                            Button(model.isEnglishLocale ? "Disconnect" : "断开") {
-                                model.disconnectTunnel()
-                            }
-                            .controlSize(.regular)
-                        } else if model.awaitingCallback {
-                            Button(model.isEnglishLocale ? "Disconnect" : "断开") {
-                                model.stop()
-                            }
-                            .controlSize(.regular)
-                        } else {
-                            Button(model.isEnglishLocale ? "Connect" : "连接") {
-                                if model.diagnosticEnabled {
-                                    model.prepareIndependentCAS()
-                                } else {
-                                    model.start()
-                                }
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(model.schemeAccentColor)
-                            .controlSize(.regular)
-                        }
-                    }
-                    Text(model.detail)
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: 12) {
-                        Button(model.showNetworkDetails
-                               ? (model.isEnglishLocale ? "Hide Network Details" : "收起网络详情")
-                               : (model.isEnglishLocale ? "Show Network Details" : "展开网络详情")) {
-                            model.showNetworkDetails.toggle()
-                        }
-                        .font(.system(size: 12))
-                        .buttonStyle(.link)
-                        Spacer()
-                        Text(model.isEnglishLocale
-                             ? "Clicking any service below auto-connects and opens it"
-                             : "未连接时直接点下方服务，将自动连接并打开")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                    }
-                    if model.showNetworkDetails {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack(spacing: 16) {
-                                Text("IPv4: \(model.activeVirtualIPv4 ?? "1.1.105.34")")
-                                    .font(.system(size: 12, design: .monospaced))
-                                Text("Interface: \(model.activeTunnelInterface ?? "utun4")")
-                                    .font(.system(size: 12, design: .monospaced))
-                                Text("DNS: 192.168.247.6")
-                                    .font(.system(size: 12, design: .monospaced))
-                                Text(SparkleNumericFormatter.formatRouteCount(129, english: model.isEnglishLocale) ?? "")
-                                    .font(.system(size: 12))
-                            }
-                            .foregroundStyle(.secondary)
-                            if !model.backendTestEnabled {
-                                HStack(spacing: 8) {
-                                    Button("CAS 登录") { model.officialLogin() }.controlSize(.small)
-                                    Button("原版回跳入口") { model.prepareCAS() }.controlSize(.small)
-                                        .disabled(model.running || model.awaitingCallback)
-                                }
-                            }
-                        }
-                        .padding(10)
-                        .background(Color.secondary.opacity(0.08))
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                    }
-                }
-                .padding(14)
-                .background(Color.secondary.opacity(0.06))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text(model.isEnglishLocale ? "Menu Bar Quick Access (4 Pinned Services)" : "菜单栏快速直达（固定 4 项常用服务）")
-                            .font(.system(size: 14, weight: .semibold))
-                        Spacer()
-                        Text("\(model.menuBarPinnedShortcuts.count) / \(MenuBarPinStore.slotCount)")
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                    }
-                    HStack(spacing: 8) {
-                        ForEach(model.menuBarPinnedShortcuts) { pin in
-                            Button {
-                                model.openOrConnectShortcut(pin)
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "pin.fill")
-                                        .font(.system(size: 11))
-                                    Text(pin.name)
-                                        .font(.system(size: 13, weight: .medium))
-                                        .lineLimit(1)
-                                }
-                                .frame(maxWidth: .infinity)
-                            }
-                            .controlSize(.regular)
-                        }
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Text(model.isEnglishLocale ? "Campus Services" : "校内常用服务")
-                            .font(.system(size: 14, weight: .semibold))
-                        Spacer()
-                        Button(model.showShortcutManager
-                               ? (model.isEnglishLocale ? "Hide All (\(model.shortcuts.count))" : "收起全部 (\(model.shortcuts.count))")
-                               : (model.isEnglishLocale ? "All Services & Custom (\(model.shortcuts.count))" : "全部服务与自定义 (\(model.shortcuts.count))")) {
-                            model.showShortcutManager.toggle()
-                        }
-                        .font(.system(size: 12))
-                        .buttonStyle(.link)
-                    }
-                    let favorites = model.shortcuts.filter(\.isFavorite)
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 8) {
-                        ForEach(favorites) { item in
-                            HStack(spacing: 6) {
-                                Button {
-                                    model.openOrConnectShortcut(item)
-                                } label: {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(item.name)
-                                            .font(.system(size: 14, weight: .medium))
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                        Text(item.subtitle)
-                                            .font(.system(size: 12))
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                    }
-                                }
-                                .buttonStyle(.bordered)
-                                Button {
-                                    model.toggleMenuBarPin(item.id)
-                                } label: {
-                                    Image(systemName: model.isPinnedToMenuBar(item.id) ? "pin.fill" : "pin")
-                                        .foregroundStyle(model.isPinnedToMenuBar(item.id) ? model.schemeAccentColor : .secondary)
-                                }
-                                .buttonStyle(.plain)
-                                .help(model.isEnglishLocale ? "Pin to Menu Bar (4 slots)" : "固定到菜单栏（4 个槽位）")
-                            }
-                        }
-                    }
-                    if model.showShortcutManager {
-                        VStack(alignment: .leading, spacing: 6) {
-                            ForEach(model.shortcuts) { item in
-                                HStack(spacing: 8) {
-                                    Button {
-                                        model.toggleFavoriteShortcut(item.id)
-                                    } label: {
-                                        Image(systemName: item.isFavorite ? "star.fill" : "star")
-                                            .foregroundStyle(item.isFavorite ? model.schemeAccentColor : .secondary)
-                                    }
-                                    .buttonStyle(.plain)
-                                    Button {
-                                        model.toggleMenuBarPin(item.id)
-                                    } label: {
-                                        Image(systemName: model.isPinnedToMenuBar(item.id) ? "pin.fill" : "pin")
-                                            .foregroundStyle(model.isPinnedToMenuBar(item.id) ? model.schemeAccentColor : .secondary)
-                                    }
-                                    .buttonStyle(.plain)
-                                    Text(item.name).font(.system(size: 13, weight: .medium))
-                                    Text(item.subtitle).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
-                                    Spacer()
-                                    Button(model.isEnglishLocale ? "Open" : "打开") {
-                                        model.openOrConnectShortcut(item)
-                                    }
-                                    .controlSize(.small)
-                                    if !item.isBuiltIn {
-                                        Button(model.isEnglishLocale ? "Remove" : "移除") {
-                                            model.removeCustomShortcut(item.id)
-                                        }
-                                        .controlSize(.small)
-                                    }
-                                }
-                            }
-                            HStack(spacing: 6) {
-                                TextField(model.isEnglishLocale ? "Service Name" : "服务名称（如：教务部）", text: $model.customShortcutName)
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(width: 150)
-                                TextField(model.isEnglishLocale ? "https://..." : "直达网址（http/https）", text: $model.customShortcutURL)
-                                    .textFieldStyle(.roundedBorder)
-                                Button(model.isEnglishLocale ? "Pin" : "固定") {
-                                    model.addCustomShortcut()
-                                }
-                                .disabled(model.customShortcutName.trimmingCharacters(in: .whitespaces).isEmpty || model.customShortcutURL.trimmingCharacters(in: .whitespaces).isEmpty)
-                            }
-                        }
-                        .padding(10)
-                        .background(Color.secondary.opacity(0.06))
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                    }
-                }
-
-                Divider()
-                HStack(spacing: 12) {
-                    Text(model.aboutMetadata.attributionText)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    if let feedback = model.updateCheckFeedback {
-                        Text(feedback)
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                    }
-                    Button(model.isEnglishLocale ? "Update" : "更新") {
-                        model.checkForUpdates()
-                    }
-                    .font(.system(size: 12))
-                    .buttonStyle(.link)
-                    Button(model.isEnglishLocale ? "About" : "关于") {
-                        model.showAboutSheet = true
-                    }
-                    .font(.system(size: 12))
-                    .buttonStyle(.link)
-                }
-            }
-            .tint(model.schemeAccentColor)
-            .padding(22)
-            .frame(width: 600)
-            .sheet(isPresented: $model.showAboutSheet) {
-                AboutSheetView(model: model)
-            }
-            .onAppear {
-                if model.headlessWorkerMode {
-                    model.startHeadlessWorkerIfRequested()
-                    return
-                }
-                NSApp.activate(ignoringOtherApps: true)
-                if !model.standaloneDefaultMode && model.backendTestEnabled && model.hasStandaloneDataSession && !model.running && !model.awaitingCallback {
-                    model.prepareIndependentCAS()
-                }
-            }
-            .onOpenURL { model.receiveCallback($0) }
-            .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in model.stop() }
+            WorkbenchRootView(coordinator: coordinator)
         }
         .windowResizability(.contentSize)
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("关于 SZU SecureLink") {
-                    model.showAboutSheet = true
+                    coordinator.chrome.showAboutSheet = true
                 }
             }
             CommandGroup(after: .appInfo) {
                 Button("检查更新...") {
-                    model.checkForUpdates()
-                    model.showAboutSheet = true
+                    coordinator.chrome.checkForUpdates()
+                    coordinator.chrome.showAboutSheet = true
                 }
             }
         }
 
         MenuBarExtra {
-            TrayMenuPopoverView(model: model)
+            TrayMenuPopoverView(
+                session: coordinator.session,
+                catalog: coordinator.catalog,
+                chrome: coordinator.chrome
+            )
         } label: {
-            Image(nsImage: MenuBarStatusIcon.image(connected: model.status == .connected))
+            MenuBarIconLabel(connectionState: coordinator.session.connectionState)
         }
         .menuBarExtraStyle(.window)
     }
 }
 
+struct WorkbenchRootView: View {
+    let coordinator: AppCoordinator
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            WorkbenchHeaderView(chrome: coordinator.chrome)
+            ConnectionStatusCardView(session: coordinator.session, chrome: coordinator.chrome)
+            MenuBarQuickAccessSectionView(
+                catalog: coordinator.catalog,
+                chrome: coordinator.chrome,
+                session: coordinator.session
+            )
+            CampusServicesSectionView(
+                catalog: coordinator.catalog,
+                chrome: coordinator.chrome,
+                session: coordinator.session
+            )
+            Divider()
+            WorkbenchFooterView(chrome: coordinator.chrome)
+        }
+        .tint(WorkbenchChromeStore.accentColor)
+        .padding(22)
+        .frame(width: 600)
+        .onAppear {
+            let session = coordinator.session
+            if session.headlessWorkerMode {
+                session.startHeadlessWorkerIfRequested()
+                return
+            }
+            NSApp.activate(ignoringOtherApps: true)
+            if !session.standaloneDefaultMode && session.backendTestEnabled && session.hasStandaloneDataSession && !session.running && !session.awaitingCallback {
+                session.prepareIndependentCAS()
+            }
+        }
+        .onOpenURL { coordinator.session.receiveCallback($0) }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+            coordinator.session.stop()
+        }
+    }
+}
+
+struct WorkbenchHeaderView: View {
+    @ObservedObject var chrome: WorkbenchChromeStore
+
+    var body: some View {
+        HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(WorkbenchChromeStore.accentColor)
+                .frame(width: 34, height: 34)
+                .overlay(
+                    Image(systemName: "building.columns.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white)
+                )
+            VStack(alignment: .leading, spacing: 2) {
+                Text("SZU SecureLink")
+                    .font(.system(size: 18, weight: .semibold))
+                Text(chrome.isEnglishLocale ? "Shenzhen University Campus Access" : "深圳大学校园网与常用服务")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button(chrome.isEnglishLocale ? "中文" : "EN") {
+                chrome.isEnglishLocale.toggle()
+            }
+            .controlSize(.small)
+        }
+    }
+}
+
+struct ConnectionStatusCardView: View {
+    @ObservedObject var session: SessionModel
+    @ObservedObject var chrome: WorkbenchChromeStore
+    @State private var showNetworkDetails = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(session.status == .connected ? Color(red: 0x2B / 255.0, green: 0x6E / 255.0, blue: 0x48 / 255.0) : Color.secondary.opacity(0.45))
+                    .frame(width: 10, height: 10)
+                Text(session.statusText(english: chrome.isEnglishLocale))
+                    .font(.system(size: 18, weight: .semibold))
+                Spacer()
+                if session.status == .connected {
+                    Button(chrome.isEnglishLocale ? "Disconnect" : "断开") {
+                        session.disconnectTunnel()
+                    }
+                    .controlSize(.regular)
+                } else if session.awaitingCallback {
+                    Button(chrome.isEnglishLocale ? "Disconnect" : "断开") {
+                        session.stop()
+                    }
+                    .controlSize(.regular)
+                } else {
+                    Button(chrome.isEnglishLocale ? "Connect" : "连接") {
+                        if session.diagnosticEnabled {
+                            session.prepareIndependentCAS()
+                        } else {
+                            session.start()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(WorkbenchChromeStore.accentColor)
+                    .controlSize(.regular)
+                }
+            }
+            Text(session.detail)
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 12) {
+                Button(showNetworkDetails
+                       ? (chrome.isEnglishLocale ? "Hide Network Details" : "收起网络详情")
+                       : (chrome.isEnglishLocale ? "Show Network Details" : "展开网络详情")) {
+                    showNetworkDetails.toggle()
+                }
+                .font(.system(size: 12))
+                .buttonStyle(.link)
+                Spacer()
+                Text(chrome.isEnglishLocale
+                     ? "Clicking any service below auto-connects and opens it"
+                     : "未连接时直接点下方服务，将自动连接并打开")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            if showNetworkDetails {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 16) {
+                        Text("IPv4: \(session.activeVirtualIPv4 ?? "1.1.105.34")")
+                            .font(.system(size: 12, design: .monospaced))
+                        Text("Interface: \(session.activeTunnelInterface ?? "utun4")")
+                            .font(.system(size: 12, design: .monospaced))
+                        Text("DNS: 192.168.247.6")
+                            .font(.system(size: 12, design: .monospaced))
+                        Text(SparkleNumericFormatter.formatRouteCount(129, english: chrome.isEnglishLocale) ?? "")
+                            .font(.system(size: 12))
+                    }
+                    .foregroundStyle(.secondary)
+                    if !session.backendTestEnabled {
+                        HStack(spacing: 8) {
+                            Button("CAS 登录") { session.officialLogin() }.controlSize(.small)
+                            Button("原版回跳入口") { session.prepareCAS() }.controlSize(.small)
+                                .disabled(session.running || session.awaitingCallback)
+                        }
+                    }
+                }
+                .padding(10)
+                .background(Color.secondary.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+        }
+        .padding(14)
+        .background(Color.secondary.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+struct MenuBarQuickAccessSectionView: View {
+    @ObservedObject var catalog: ShortcutCatalogStore
+    @ObservedObject var chrome: WorkbenchChromeStore
+    let session: SessionModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(chrome.isEnglishLocale ? "Menu Bar Quick Access (4 Pinned Services)" : "菜单栏快速直达（固定 4 项常用服务）")
+                    .font(.system(size: 14, weight: .semibold))
+                Spacer()
+                Text("\(catalog.menuBarPinnedShortcuts.count) / \(MenuBarPinStore.slotCount)")
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 8) {
+                ForEach(catalog.menuBarPinnedShortcuts) { pin in
+                    Button {
+                        session.openOrConnectShortcut(pin)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "pin.fill")
+                                .font(.system(size: 11))
+                            Text(pin.name)
+                                .font(.system(size: 13, weight: .medium))
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .controlSize(.regular)
+                }
+            }
+        }
+    }
+}
+
+struct CampusServicesSectionView: View {
+    @ObservedObject var catalog: ShortcutCatalogStore
+    @ObservedObject var chrome: WorkbenchChromeStore
+    let session: SessionModel
+    @State private var showShortcutManager = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(chrome.isEnglishLocale ? "Campus Services" : "校内常用服务")
+                    .font(.system(size: 14, weight: .semibold))
+                Spacer()
+                Button(showShortcutManager
+                       ? (chrome.isEnglishLocale ? "Hide All (\(catalog.shortcuts.count))" : "收起全部 (\(catalog.shortcuts.count))")
+                       : (chrome.isEnglishLocale ? "All Services & Custom (\(catalog.shortcuts.count))" : "全部服务与自定义 (\(catalog.shortcuts.count))")) {
+                    showShortcutManager.toggle()
+                }
+                .font(.system(size: 12))
+                .buttonStyle(.link)
+            }
+            let favorites = catalog.shortcuts.filter(\.isFavorite)
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 8) {
+                ForEach(favorites) { item in
+                    HStack(spacing: 6) {
+                        Button {
+                            session.openOrConnectShortcut(item)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.name)
+                                    .font(.system(size: 14, weight: .medium))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                Text(item.subtitle)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        Button {
+                            catalog.toggleMenuBarPin(item.id)
+                        } label: {
+                            Image(systemName: catalog.isPinnedToMenuBar(item.id) ? "pin.fill" : "pin")
+                                .foregroundStyle(catalog.isPinnedToMenuBar(item.id) ? WorkbenchChromeStore.accentColor : .secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(chrome.isEnglishLocale ? "Pin to Menu Bar (4 slots)" : "固定到菜单栏（4 个槽位）")
+                    }
+                }
+            }
+            if showShortcutManager {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(catalog.shortcuts) { item in
+                        HStack(spacing: 8) {
+                            Button {
+                                catalog.toggleFavoriteShortcut(item.id)
+                            } label: {
+                                Image(systemName: item.isFavorite ? "star.fill" : "star")
+                                    .foregroundStyle(item.isFavorite ? WorkbenchChromeStore.accentColor : .secondary)
+                            }
+                            .buttonStyle(.plain)
+                            Button {
+                                catalog.toggleMenuBarPin(item.id)
+                            } label: {
+                                Image(systemName: catalog.isPinnedToMenuBar(item.id) ? "pin.fill" : "pin")
+                                    .foregroundStyle(catalog.isPinnedToMenuBar(item.id) ? WorkbenchChromeStore.accentColor : .secondary)
+                            }
+                            .buttonStyle(.plain)
+                            Text(item.name).font(.system(size: 13, weight: .medium))
+                            Text(item.subtitle).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                            Spacer()
+                            Button(chrome.isEnglishLocale ? "Open" : "打开") {
+                                session.openOrConnectShortcut(item)
+                            }
+                            .controlSize(.small)
+                            if !item.isBuiltIn {
+                                Button(chrome.isEnglishLocale ? "Remove" : "移除") {
+                                    catalog.removeCustomShortcut(item.id)
+                                }
+                                .controlSize(.small)
+                            }
+                        }
+                    }
+                    CustomShortcutFormRow(chrome: chrome, catalog: catalog)
+                }
+                .padding(10)
+                .background(Color.secondary.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+        }
+    }
+}
+
+struct CustomShortcutFormRow: View {
+    @ObservedObject var chrome: WorkbenchChromeStore
+    let catalog: ShortcutCatalogStore
+    @State private var customShortcutName = ""
+    @State private var customShortcutURL = ""
+
+    var body: some View {
+        HStack(spacing: 6) {
+            TextField(chrome.isEnglishLocale ? "Service Name" : "服务名称（如：教务部）", text: $customShortcutName)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 150)
+            TextField(chrome.isEnglishLocale ? "https://..." : "直达网址（http/https）", text: $customShortcutURL)
+                .textFieldStyle(.roundedBorder)
+            Button(chrome.isEnglishLocale ? "Pin" : "固定") {
+                if catalog.addCustomShortcut(name: customShortcutName, url: customShortcutURL) {
+                    customShortcutName = ""
+                    customShortcutURL = ""
+                }
+            }
+            .disabled(customShortcutName.trimmingCharacters(in: .whitespaces).isEmpty || customShortcutURL.trimmingCharacters(in: .whitespaces).isEmpty)
+        }
+    }
+}
+
+struct WorkbenchFooterView: View {
+    @ObservedObject var chrome: WorkbenchChromeStore
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(chrome.aboutMetadata.attributionText)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+            Spacer()
+            if let feedback = chrome.updateCheckFeedback {
+                Text(feedback)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            Button(chrome.isEnglishLocale ? "Update" : "更新") {
+                chrome.checkForUpdates()
+            }
+            .font(.system(size: 12))
+            .buttonStyle(.link)
+            Button(chrome.isEnglishLocale ? "About" : "关于") {
+                chrome.showAboutSheet = true
+            }
+            .font(.system(size: 12))
+            .buttonStyle(.link)
+        }
+        .sheet(isPresented: $chrome.showAboutSheet) {
+            AboutSheetView(chrome: chrome)
+        }
+    }
+}
+
+struct MenuBarIconLabel: View {
+    @ObservedObject var connectionState: MenuBarConnectionState
+
+    var body: some View {
+        Image(nsImage: MenuBarStatusIcon.image(connected: connectionState.isConnected))
+    }
+}
+
 struct TrayMenuPopoverView: View {
-    @ObservedObject var model: SessionModel
+    @ObservedObject var session: SessionModel
+    @ObservedObject var catalog: ShortcutCatalogStore
+    @ObservedObject var chrome: WorkbenchChromeStore
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Circle()
-                    .fill(model.status == .connected ? Color(red: 0x2B / 255.0, green: 0x6E / 255.0, blue: 0x48 / 255.0) : Color.secondary.opacity(0.45))
+                    .fill(session.status == .connected ? Color(red: 0x2B / 255.0, green: 0x6E / 255.0, blue: 0x48 / 255.0) : Color.secondary.opacity(0.45))
                     .frame(width: 8, height: 8)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(model.statusText)
+                    Text(session.statusText(english: chrome.isEnglishLocale))
                         .font(.system(size: 14, weight: .semibold))
-                    if let vip = model.activeVirtualIPv4, model.status == .connected {
+                    if let vip = session.activeVirtualIPv4, session.status == .connected {
                         Text(vip)
                             .font(.system(size: 12, design: .monospaced))
                             .foregroundStyle(.secondary)
                     }
                 }
                 Spacer()
-                if model.status == .connected {
-                    Button(model.isEnglishLocale ? "Disconnect" : "断开") {
-                        model.disconnectTunnel()
+                if session.status == .connected {
+                    Button(chrome.isEnglishLocale ? "Disconnect" : "断开") {
+                        session.disconnectTunnel()
                     }
                     .controlSize(.small)
                 } else {
-                    Button(model.isEnglishLocale ? "Connect" : "连接") {
-                        if model.diagnosticEnabled {
-                            model.prepareIndependentCAS()
+                    Button(chrome.isEnglishLocale ? "Connect" : "连接") {
+                        if session.diagnosticEnabled {
+                            session.prepareIndependentCAS()
                         } else {
-                            model.start()
+                            session.start()
                         }
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(model.schemeAccentColor)
+                    .tint(WorkbenchChromeStore.accentColor)
                     .controlSize(.small)
                 }
             }
 
             Divider()
 
-            Text(model.isEnglishLocale ? "Pinned Campus Services (4)" : "固定常用服务（一键连接并打开）")
+            Text(chrome.isEnglishLocale ? "Pinned Campus Services (4)" : "固定常用服务（一键连接并打开）")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
 
             VStack(spacing: 4) {
-                ForEach(model.menuBarPinnedShortcuts) { item in
+                ForEach(catalog.menuBarPinnedShortcuts) { item in
                     Button {
-                        model.openOrConnectShortcut(item)
+                        session.openOrConnectShortcut(item)
                     } label: {
                         HStack {
                             Text(item.name)
                                 .font(.system(size: 13, weight: .medium))
                             Spacer()
-                            Text(model.isEnglishLocale ? "Open" : "打开")
+                            Text(chrome.isEnglishLocale ? "Open" : "打开")
                                 .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
                         }
@@ -1442,18 +1585,18 @@ struct TrayMenuPopoverView: View {
             Divider()
 
             HStack {
-                Button(model.isEnglishLocale ? "Open Workbench" : "打开主窗口") {
+                Button(chrome.isEnglishLocale ? "Open Workbench" : "打开主窗口") {
                     NSApp.activate(ignoringOtherApps: true)
                 }
                 .font(.system(size: 12))
                 .buttonStyle(.link)
                 Spacer()
-                Button(model.isEnglishLocale ? "Update" : "更新") {
-                    model.checkForUpdates()
+                Button(chrome.isEnglishLocale ? "Update" : "更新") {
+                    chrome.checkForUpdates()
                 }
                 .font(.system(size: 12))
                 .buttonStyle(.link)
-                Button(model.isEnglishLocale ? "Quit" : "退出") {
+                Button(chrome.isEnglishLocale ? "Quit" : "退出") {
                     NSApplication.shared.terminate(nil)
                 }
                 .font(.system(size: 12))
@@ -1466,12 +1609,12 @@ struct TrayMenuPopoverView: View {
 }
 
 struct AboutSheetView: View {
-    @ObservedObject var model: SessionModel
+    @ObservedObject var chrome: WorkbenchChromeStore
 
     var body: some View {
         VStack(spacing: 14) {
             RoundedRectangle(cornerRadius: 12)
-                .fill(model.schemeAccentColor)
+                .fill(WorkbenchChromeStore.accentColor)
                 .frame(width: 48, height: 48)
                 .overlay(
                     Image(systemName: "building.columns.fill")
@@ -1480,13 +1623,13 @@ struct AboutSheetView: View {
                 )
                 .padding(.top, 4)
             VStack(spacing: 4) {
-                Text(model.aboutMetadata.appName)
+                Text(chrome.aboutMetadata.appName)
                     .font(.system(size: 18, weight: .semibold))
-                Text("v\(model.aboutMetadata.version) (Build \(model.aboutMetadata.build))")
+                Text("v\(chrome.aboutMetadata.version) (Build \(chrome.aboutMetadata.build))")
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
-            Text(model.aboutMetadata.summary)
+            Text(chrome.aboutMetadata.summary)
                 .font(.system(size: 13))
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.primary)
@@ -1494,18 +1637,18 @@ struct AboutSheetView: View {
             Divider()
             VStack(spacing: 6) {
                 HStack(spacing: 10) {
-                    Button(model.isEnglishLocale ? "Update" : "更新") {
-                        model.checkForUpdates()
+                    Button(chrome.isEnglishLocale ? "Update" : "更新") {
+                        chrome.checkForUpdates()
                     }
                     .controlSize(.small)
-                    Text(model.updateCheckFeedback ?? model.aboutMetadata.updateStatusText)
+                    Text(chrome.updateCheckFeedback ?? chrome.aboutMetadata.updateStatusText)
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
-                Text("Sparkle Feed: \(model.sparkleConfig.feedURL)")
+                Text("Sparkle Feed: \(chrome.sparkleConfig.feedURL)")
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(.secondary)
-                Text(model.aboutMetadata.attributionText)
+                Text(chrome.aboutMetadata.attributionText)
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .padding(.top, 2)
@@ -1513,8 +1656,8 @@ struct AboutSheetView: View {
             Divider()
             HStack {
                 Spacer()
-                Button(model.isEnglishLocale ? "Close" : "关闭") {
-                    model.showAboutSheet = false
+                Button(chrome.isEnglishLocale ? "Close" : "关闭") {
+                    chrome.showAboutSheet = false
                 }
                 .keyboardShortcut(.defaultAction)
             }
