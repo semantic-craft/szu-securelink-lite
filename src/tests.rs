@@ -244,7 +244,7 @@ fn test_ip_math_and_shortcuts_and_gpui_workbench() {
     assert!(vm.in_tunnel_resolve_domains().len() <= 32);
     assert_eq!(APP_CHINESE_NAME, "荔连");
     assert_eq!(ABOUT_ATTRIBUTION_TEXT, "深圳大学法律人工智能实训实验室");
-    assert_eq!(APP_VERSION, "0.2.2");
+    assert_eq!(APP_VERSION, "0.2.3");
 
     vm.check_for_updates();
     vm.toggle_settings();

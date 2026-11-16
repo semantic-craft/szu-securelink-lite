@@ -54,7 +54,7 @@ static inline NSView *MSIMEBuildVersionPageView(
 
     NSTextField *titleLbl = MSIMEMakeLabel(vp[@"app_name"] ?: @"荔连 · SZU SecureLink", 14.5, NSFontWeightBold, [NSColor labelColor]);
     [titleLbl setContentHuggingPriority:NSLayoutPriorityDefaultHigh forOrientation:NSLayoutConstraintOrientationHorizontal];
-    NSString *verText = [NSString stringWithFormat:@"v%@ (Build %@)", vp[@"version"] ?: @"0.2.2", vp[@"build"] ?: @"3"];
+    NSString *verText = [NSString stringWithFormat:@"v%@ (Build %@)", vp[@"version"] ?: @"0.2.3", vp[@"build"] ?: @"4"];
     NSTextField *verLbl = [NSTextField labelWithString:verText];
     verLbl.translatesAutoresizingMaskIntoConstraints = NO;
     verLbl.font = [NSFont monospacedSystemFontOfSize:11.5 weight:NSFontWeightMedium];

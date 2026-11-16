@@ -3,7 +3,7 @@ members = [".", "crates/host-macos"]
 
 [package]
 name = "szu-securelink-rs"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2024"
 description = "Pure-Rust Zero-Trust tunnel core and native macOS AppKit host for SZU SecureLink"
 license = "MIT"

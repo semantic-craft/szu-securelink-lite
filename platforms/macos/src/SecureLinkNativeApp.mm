@@ -927,7 +927,7 @@
     guideBtn.bordered = NO;
     guideBtn.font = [NSFont systemFontOfSize:11.5 weight:NSFontWeightRegular];
 
-    NSString *verTitle = [NSString stringWithFormat:@"v%@", snap[@"app_version"] ?: @"0.2.2"];
+    NSString *verTitle = [NSString stringWithFormat:@"v%@", snap[@"app_version"] ?: @"0.2.3"];
     NSButton *verBtn = [NSButton buttonWithTitle:verTitle
                                           target:self
                                           action:@selector(onOpenVersionTabClicked:)];

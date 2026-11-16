@@ -953,14 +953,14 @@ dependencies = [
 
 [[package]]
 name = "szu-host-macos"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "szu-securelink-rs"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "serde_json",
  "szu-host-macos",

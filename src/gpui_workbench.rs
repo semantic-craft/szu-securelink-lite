@@ -15,7 +15,7 @@ pub const APP_CHINESE_NAME: &str = "荔连";
 /// Subtle attribution text displayed on the About page and near the Check for Updates control.
 pub const ABOUT_ATTRIBUTION_TEXT: &str = "深圳大学法律人工智能实训实验室";
 /// Application version string displayed in the About page and update check.
-pub const APP_VERSION: &str = "0.2.2";
+pub const APP_VERSION: &str = "0.2.3";
 /// Default 4 user-pinned campus services in the macOS menu bar popover.
 pub const DEFAULT_MENU_BAR_PIN_IDS: [&str; 4] = ["szu-reimburse-system", "szu-finance-sso", "szu-cnki-sso", "szu-ehall"];
 

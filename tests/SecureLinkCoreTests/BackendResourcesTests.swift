@@ -185,10 +185,10 @@ final class BackendResourcesTests: XCTestCase {
     func testAboutMetadataAndAttributionText() {
         let about = AboutMetadata.current
         XCTAssertEqual(about.appName, "SZU SecureLink")
-        XCTAssertEqual(about.version, "0.2.0")
+        XCTAssertEqual(about.version, "0.2.3")
         XCTAssertEqual(about.organization, "szu")
         XCTAssertEqual(about.attributionText, "深圳大学法律人工智能实训实验室")
-        XCTAssertTrue(about.updateStatusText.contains("0.2.0"))
+        XCTAssertTrue(about.updateStatusText.contains("0.2.3"))
     }
 
     func testSparkleConfigurationAndNumericFormatting() {

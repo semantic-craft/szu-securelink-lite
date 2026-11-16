@@ -20,7 +20,7 @@ pub const GITHUB_LATEST_API_URL: &str = "https://api.github.com/repos/semantic-c
 /// Strict URL prefix enforced on parsed GitHub release and asset download URLs.
 pub const ALLOWED_GITHUB_URL_PREFIX: &str = "https://github.com/semantic-craft/szu-securelink-lite/";
 /// Monotonic bundle build number displayed alongside [`APP_VERSION`].
-pub const APP_BUILD_NUMBER: &str = "3";
+pub const APP_BUILD_NUMBER: &str = "4";
 /// Supported target architecture label shown on the Version & Updates page.
 pub const APP_ARCH_LABEL: &str = "macOS arm64 (Apple Silicon)";
 /// Short Apple Developer ID signing team label shown on the Version & Updates page.
@@ -194,6 +194,10 @@ pub fn format_update_status_line(sparkle_state: &SparkleUpdateState, vp: &Versio
 
 fn builtin_changelog(en: bool) -> Vec<Value> {
     let entries = [
+        ("0.2.3", "v0.2.3", "2026-11-16",
+         if en { "Settings Version Page & Live Update Check" } else { "偏好设置版本页与实时检查更新" },
+         if en { "Added Version & Updates tab in Preferences with asynchronous GitHub Releases checks, decoupled headless worker startup I/O, and removed legacy dead code." }
+         else { "偏好设置新增「版本与更新」分页与 GitHub Releases 异步版本检查，拆分 Swift 控制面状态域并解耦无头子进程启动开销，清理历史死代码。" }),
         ("0.2.2", "v0.2.2", "2026-11-09",
          if en { "Native AppKit Workbench & Menu Bar" } else { "原生 AppKit 桌面工作台与菜单栏" },
          if en { "Pure Safe Rust core with native AppKit UI, Dock/Menu Bar shell presence, ? info-tip popovers, and instant utun adoption." }

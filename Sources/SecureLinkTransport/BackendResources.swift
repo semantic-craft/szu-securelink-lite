@@ -158,11 +158,11 @@ public struct AboutMetadata: Codable, Sendable, Equatable {
 
     public static let current = AboutMetadata(
         appName: "SZU SecureLink",
-        version: "0.2.0",
-        build: "1",
+        version: "0.2.3",
+        build: "4",
         organization: "szu",
         summary: "深圳大学零信任校园网原生客户端（macOS Native · Safe Rust 核心）",
-        updateStatusText: "当前已是最新版本（v0.2.0）",
+        updateStatusText: "当前已是最新版本（v0.2.3）",
         attributionText: "深圳大学法律人工智能实训实验室"
     )
 
