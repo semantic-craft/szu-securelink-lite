@@ -130,7 +130,7 @@ def validate_capture(capture, context: Context) -> Validation:
         return Validation((Issue("invalid-context", "context"),))
     if not _uuid(context.session_id):
         issue("invalid-session", "context.sessionID")
-    # Audited transaction lifetime: the unit-4 observation window needs up to
+    # Audited transaction lifetime: the observation window needs up to
     # 15 minutes; official sessions run longer, so this is our own bound.
     if not _integer(context.duration_seconds, 1, 900):
         issue("invalid-duration", "context.durationSeconds")
@@ -238,7 +238,7 @@ def validate_capture(capture, context: Context) -> Validation:
         if network.prefixlen <= 1:
             issue("global-route", path)
         reserved = (["0.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4", "240.0.0.0/4",
-                     # RFC 2544 benchmark range and local LAN must never be grabbed by the tunnel.
+                     # RFC 2544 benchmark range and common local LAN 192.168.50.0/24 must never be grabbed by the tunnel.
                      "198.18.0.0/15", "192.168.50.0/24"]
                     if network.version == 4 else ["::/128", "::1/128", "fe80::/10", "ff00::/8"])
         if any(network.overlaps(ipaddress.ip_network(net)) for net in reserved):
@@ -364,7 +364,7 @@ def _route_operation(owner: dict, route: str, gateway: str | None, origin: str) 
 
 
 def push_operations(plan: Plan, lease: InterfaceLease) -> tuple[Operation, ...]:
-    """Route additions for a validated in-session push delta (unit 4). Only
+    """Route additions for a validated in-session push delta. Only
     the pushed-prefix subset, origin ctrl-push; the delta capture's address
     fields exist to satisfy the validator and never produce an
     owned-interface or interface-prefix op here. Duplicate and conflict
@@ -380,7 +380,7 @@ def push_operations(plan: Plan, lease: InterfaceLease) -> tuple[Operation, ...]:
 
 def static_route_operations(plan: Plan, lease: InterfaceLease,
                             static_routes: tuple[str, ...]) -> tuple[Operation, ...]:
-    """Vendor local static policy (unit 5): the stable school-internal route
+    """Vendor local static policy: the stable school-internal route
     set the official client holds in its own configuration. Split tunnel by
     design — the default route stays with the system gateway. A static
     route already covered by the session plan is skipped exactly as the

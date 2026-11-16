@@ -1,7 +1,7 @@
 """Differential test: the C++ plan validator must agree with network_plan.py.
 
 Every case is judged by both implementations and the issue sets plus plan
-fields must match exactly. This is the authority for the 3a C++ mirror; any
+fields must match exactly. This is the authority for the C++ mirror; any
 drift fails the project gate.
 """
 import copy

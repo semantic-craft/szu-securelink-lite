@@ -3,8 +3,8 @@
 // /sbin/route invocations (IPv4 via the captured peer gateway, IPv6 via
 // -iface link gateway, never RTF_IFSCOPE); DNS becomes the supplemental
 // resolver store key with its canonical payload. NOTHING here executes or
-// mutates: these are data descriptions the privileged daemon (3c) applies
-// under journal ownership in 3e.
+// mutates: these are data descriptions the privileged daemon applies
+// under journal ownership.
 #include <optional>
 #include <string>
 #include <vector>

@@ -80,7 +80,7 @@ fn snapshot_reducer_and_reconcile_preserve_connected_state() {
 
     let notice = EngineActiveNotice {
         interface: "utun4".to_string(),
-        virtual_ipv4: "1.1.105.34".to_string(),
+        virtual_ipv4: "1.1.96.100".to_string(),
         dns_server: "192.168.247.6".to_string(),
     };
     apply_event_to_snapshot(
@@ -137,7 +137,7 @@ fn concurrent_ensure_coalesces_into_single_actor_connect() {
         generation: GenerationId(1),
         notice: EngineActiveNotice {
             interface: "utun4".to_string(),
-            virtual_ipv4: "1.1.105.34".to_string(),
+            virtual_ipv4: "1.1.96.100".to_string(),
             dns_server: "192.168.247.6".to_string(),
         },
     });
@@ -186,7 +186,7 @@ fn open_sso_waits_for_tunnel_and_opens_target_once() {
         generation: GenerationId(1),
         notice: EngineActiveNotice {
             interface: "utun4".to_string(),
-            virtual_ipv4: "1.1.105.34".to_string(),
+            virtual_ipv4: "1.1.96.100".to_string(),
             dns_server: "192.168.247.6".to_string(),
         },
     });

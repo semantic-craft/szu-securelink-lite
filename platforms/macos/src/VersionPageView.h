@@ -3,7 +3,7 @@
 #import <Cocoa/Cocoa.h>
 #include "SettingsLayout.h"
 
-static inline NSBox *MSIMEMakeVersionPill(NSString *text, NSColor *tintColor) {
+static inline NSBox *SLMakeVersionPill(NSString *text, NSColor *tintColor) {
     NSBox *pill = [[NSBox alloc] initWithFrame:NSZeroRect];
     pill.translatesAutoresizingMaskIntoConstraints = NO;
     pill.boxType = NSBoxCustom;
@@ -11,7 +11,7 @@ static inline NSBox *MSIMEMakeVersionPill(NSString *text, NSColor *tintColor) {
     pill.cornerRadius = 4.0;
     pill.fillColor = [tintColor colorWithAlphaComponent:0.15];
     pill.contentViewMargins = NSMakeSize(6.0, 1.5);
-    NSTextField *lbl = MSIMEMakeLabel(text, 10.5, NSFontWeightSemibold, tintColor);
+    NSTextField *lbl = SLMakeLabel(text, 10.5, NSFontWeightSemibold, tintColor);
     NSView *content = pill.contentView;
     [content addSubview:lbl];
     [NSLayoutConstraint activateConstraints:@[
@@ -23,7 +23,7 @@ static inline NSBox *MSIMEMakeVersionPill(NSString *text, NSColor *tintColor) {
     return pill;
 }
 
-static inline NSView *MSIMEBuildVersionPageView(
+static inline NSView *SLBuildVersionPageView(
     NSDictionary *snap,
     BOOL en,
     NSColor *accentColor,
@@ -41,7 +41,7 @@ static inline NSView *MSIMEBuildVersionPageView(
     container.translatesAutoresizingMaskIntoConstraints = NO;
 
     // Card 1: Current Version, Update Status, Action Buttons, and Auto-Check Toggle
-    NSBox *statusCard = MSIMEMakeCardBox();
+    NSBox *statusCard = SLMakeCardBox();
     NSView *c1 = statusCard.contentView;
 
     NSView *topBlock = [[NSView alloc] initWithFrame:NSZeroRect];
@@ -52,7 +52,7 @@ static inline NSView *MSIMEBuildVersionPageView(
     NSURL *iconURL = [[NSBundle mainBundle] URLForResource:@"AppIcon" withExtension:@"png"];
     iconView.image = iconURL ? [[NSImage alloc] initWithContentsOfURL:iconURL] : [NSApp applicationIconImage];
 
-    NSTextField *titleLbl = MSIMEMakeLabel(vp[@"app_name"] ?: @"荔连 · SZU SecureLink", 14.5, NSFontWeightBold, [NSColor labelColor]);
+    NSTextField *titleLbl = SLMakeLabel(vp[@"app_name"] ?: @"荔连 · SZU SecureLink", 14.5, NSFontWeightBold, [NSColor labelColor]);
     [titleLbl setContentHuggingPriority:NSLayoutPriorityDefaultHigh forOrientation:NSLayoutConstraintOrientationHorizontal];
     NSString *verText = [NSString stringWithFormat:@"v%@ (Build %@)", vp[@"version"] ?: @"0.2.3", vp[@"build"] ?: @"4"];
     NSTextField *verLbl = [NSTextField labelWithString:verText];
@@ -66,7 +66,7 @@ static inline NSView *MSIMEBuildVersionPageView(
 
     NSColor *headlineColor = hasUpdate ? [NSColor systemOrangeColor]
                                        : (isChecking ? [NSColor secondaryLabelColor] : [NSColor labelColor]);
-    NSTextField *headlineLbl = MSIMEMakeLabel(vp[@"status_headline"] ?: @"", 13.0, NSFontWeightSemibold, headlineColor);
+    NSTextField *headlineLbl = SLMakeLabel(vp[@"status_headline"] ?: @"", 13.0, NSFontWeightSemibold, headlineColor);
 
     NSTextField *detailLbl = [NSTextField wrappingLabelWithString:(vp[@"status_detail"] ?: @"")];
     detailLbl.translatesAutoresizingMaskIntoConstraints = NO;
@@ -162,13 +162,13 @@ static inline NSView *MSIMEBuildVersionPageView(
     ]];
 
     // Card 2: Scrollable Release History + Build & Signing Note
-    NSBox *historyCard = MSIMEMakeCardBox();
+    NSBox *historyCard = SLMakeCardBox();
     NSView *c2 = historyCard.contentView;
 
-    NSTextField *historyTitle = MSIMEMakeLabel(
+    NSTextField *historyTitle = SLMakeLabel(
         en ? @"Release History & Build Notes" : @"版本记录与架构信息",
-        msime::mac::layout::kSectionFontSize, NSFontWeightSemibold, [NSColor labelColor]);
-    NSTextField *repoLbl = MSIMEMakeLabel(vp[@"repo_slug"] ?: @"", 11.5, NSFontWeightRegular, [NSColor secondaryLabelColor]);
+        szu::mac::layout::kSectionFontSize, NSFontWeightSemibold, [NSColor labelColor]);
+    NSTextField *repoLbl = SLMakeLabel(vp[@"repo_slug"] ?: @"", 11.5, NSFontWeightRegular, [NSColor secondaryLabelColor]);
 
     NSScrollView *scrollView = [[NSScrollView alloc] initWithFrame:NSZeroRect];
     scrollView.translatesAutoresizingMaskIntoConstraints = NO;
@@ -193,17 +193,17 @@ static inline NSView *MSIMEBuildVersionPageView(
         [tagLbl setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
         [tagLbl setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
 
-        NSTextField *entryTitle = MSIMEMakeLabel(entry[@"title"] ?: @"", 12.0, NSFontWeightMedium, [NSColor labelColor]);
+        NSTextField *entryTitle = SLMakeLabel(entry[@"title"] ?: @"", 12.0, NSFontWeightMedium, [NSColor labelColor]);
         [entryTitle setContentHuggingPriority:NSLayoutPriorityDefaultHigh forOrientation:NSLayoutConstraintOrientationHorizontal];
         [entryTitle setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
 
-        NSTextField *dateLbl = MSIMEMakeLabel(entry[@"date"] ?: @"", 11.0, NSFontWeightRegular, [NSColor secondaryLabelColor]);
+        NSTextField *dateLbl = SLMakeLabel(entry[@"date"] ?: @"", 11.0, NSFontWeightRegular, [NSColor secondaryLabelColor]);
         [dateLbl setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
         [dateLbl setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
 
         NSString *badge = [entry[@"status_badge"] isKindOfClass:[NSString class]] ? entry[@"status_badge"] : @"";
         BOOL isRemoteNew = [entry[@"is_remote_new"] boolValue];
-        NSBox *pill = badge.length > 0 ? MSIMEMakeVersionPill(badge, isRemoteNew ? [NSColor systemOrangeColor] : accentColor) : nil;
+        NSBox *pill = badge.length > 0 ? SLMakeVersionPill(badge, isRemoteNew ? [NSColor systemOrangeColor] : accentColor) : nil;
 
         NSTextField *summaryLbl = [NSTextField wrappingLabelWithString:(entry[@"summary"] ?: @"")];
         summaryLbl.translatesAutoresizingMaskIntoConstraints = NO;
@@ -261,7 +261,7 @@ static inline NSView *MSIMEBuildVersionPageView(
     NSString *archText = en
         ? [NSString stringWithFormat:@"Architecture: %@ · Signing: %@ · Build %@", vp[@"arch"] ?: @"", vp[@"signing_team"] ?: @"", vp[@"build"] ?: @""]
         : [NSString stringWithFormat:@"目标架构：%@ · 签名团队：%@ · 构建号 %@", vp[@"arch"] ?: @"", vp[@"signing_team"] ?: @"", vp[@"build"] ?: @""];
-    NSTextField *archLbl = MSIMEMakeLabel(archText, 11.0, NSFontWeightRegular, [NSColor secondaryLabelColor]);
+    NSTextField *archLbl = SLMakeLabel(archText, 11.0, NSFontWeightRegular, [NSColor secondaryLabelColor]);
 
     [c2 addSubview:historyTitle];
     [c2 addSubview:repoLbl];
@@ -301,7 +301,7 @@ static inline NSView *MSIMEBuildVersionPageView(
         [statusCard.leadingAnchor constraintEqualToAnchor:container.leadingAnchor],
         [statusCard.trailingAnchor constraintEqualToAnchor:container.trailingAnchor],
 
-        [historyCard.topAnchor constraintEqualToAnchor:statusCard.bottomAnchor constant:msime::mac::layout::kCardSpacing],
+        [historyCard.topAnchor constraintEqualToAnchor:statusCard.bottomAnchor constant:szu::mac::layout::kCardSpacing],
         [historyCard.leadingAnchor constraintEqualToAnchor:container.leadingAnchor],
         [historyCard.trailingAnchor constraintEqualToAnchor:container.trailingAnchor],
         [historyCard.bottomAnchor constraintEqualToAnchor:container.bottomAnchor],

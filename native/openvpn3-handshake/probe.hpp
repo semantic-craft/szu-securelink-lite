@@ -60,7 +60,7 @@ public:
 class HandshakeProbe final : public openvpn::ClientAPI::OpenVPNClient, public SzuDomainOptionCapture {
     openvpn::TransportClientFactory::Ptr transportConfig;
 public:
-    // Unit 4: set by the data engine only. When absent, a route push still
+    // Set by the data engine only. When absent, a route push still
     // fails the session closed exactly as in the handshake probe.
     std::function<void(const std::vector<securelink::ctrl::PushRouteIntent> &)> pushUpdateHandler;
 public:

@@ -1,39 +1,10 @@
 import SwiftUI
 import AppKit
 import CoreServices
-import CryptoKit
 import Darwin
 import Security
 import SecureLinkCore
 import SecureLinkTransport
-
-final class Cancellation: @unchecked Sendable {
-    private let lock = NSLock()
-    private var stopped = false
-    func cancel() { lock.lock(); stopped = true; lock.unlock() }
-    func isCancelled() -> Bool { lock.lock(); defer { lock.unlock() }; return stopped }
-}
-
-final class LoginURLHolder: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: URL?
-    func set(_ url: URL) { lock.lock(); value = url; lock.unlock() }
-    func take() -> URL? { lock.lock(); defer { lock.unlock() }; defer { value = nil }; return value }
-}
-
-final class AuthenticationStateHolder: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: CASPreAuthentication.State = .idle
-    func set(_ state: CASPreAuthentication.State) { lock.lock(); value = state; lock.unlock() }
-    func get() -> CASPreAuthentication.State { lock.lock(); defer { lock.unlock() }; return value }
-}
-
-final class ConnectionStateHolder: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: CASConnectionFlow.State = .idle
-    func set(_ state: CASConnectionFlow.State) { lock.lock(); value = state; lock.unlock() }
-    func get() -> CASConnectionFlow.State { lock.lock(); defer { lock.unlock() }; return value }
-}
 
 @MainActor final class MenuBarConnectionState: ObservableObject {
     @Published private(set) var isConnected = false
@@ -120,7 +91,6 @@ final class ConnectionStateHolder: @unchecked Sendable {
     @Published var showAboutSheet = false
     @Published var updateCheckFeedback: String?
     let aboutMetadata = AboutMetadata.current
-    let sparkleConfig = SparkleConfiguration.current
     static let accentColor = Color(red: 0x8C / 255.0, green: 0x22 / 255.0, blue: 0x32 / 255.0)
 
     func checkForUpdates() {
@@ -159,61 +129,13 @@ final class ConnectionStateHolder: @unchecked Sendable {
         self.shortcutsFallbackURL = shortcutsFallbackURL
     }
 
-    let standaloneDefaultMode: Bool = {
-        let args = ProcessInfo.processInfo.arguments
-        return !args.contains("--cas-connect-test")
-            && !args.contains("--cas-preauthentication-test")
-            && !args.contains("--backend-preauthentication-test")
-            && !args.contains("--backend-configuration-test")
-            && !args.contains("--legacy-ipc-mode")
-    }()
     let headlessWorkerMode = ProcessInfo.processInfo.arguments.contains("--headless-tunnel-worker")
     private var headlessWorkerStarted = false
     func emitWorkerLine(_ line: String) {
         guard headlessWorkerMode, let data = (line + "\n").data(using: .utf8) else { return }
         try? FileHandle.standardError.write(contentsOf: data)
     }
-    var backendConfigurationTestEnabled: Bool {
-        standaloneDefaultMode || ProcessInfo.processInfo.arguments.contains("--backend-configuration-test")
-    }
-    var backendTestEnabled: Bool { backendConfigurationTestEnabled || ProcessInfo.processInfo.arguments.contains("--backend-preauthentication-test") }
-    private var backendConfigurationReceipt: [String: Any] = [:]
-    private var backendConfigurationValidated = false
-    private var backendConfigurationFailure: [String: String] = [:]
-    private var backendEngineEvaluation: [String: Any] = [:]
-    private var backendHandshake: [String: Any] = [:]
-    private var backendDataSession: [String: Any] = [:]
-    private var handshakeValidated = false
-    private var handshakeProbe: URL? {
-        let args = ProcessInfo.processInfo.arguments
-        guard backendConfigurationTestEnabled, let index = args.firstIndex(of: "--handshake-probe"), args.indices.contains(index + 1) else { return nil }
-        return URL(fileURLWithPath: args[index + 1])
-    }
-    /// Standalone finance acceptance: the session receipt carries the gate's
-    /// expected fields only when the homepage observation validated and the
-    /// official backend really is stopped.
-    private var financeMode: Bool { ProcessInfo.processInfo.arguments.contains("--finance") }
-    private var homepageObservationPath: URL? {
-        let args = ProcessInfo.processInfo.arguments
-        guard financeMode, let index = args.firstIndex(of: "--homepage-observation"), args.indices.contains(index + 1) else { return nil }
-        return URL(fileURLWithPath: args[index + 1])
-    }
-    private var backendStillRunning: Bool {
-        for name in ["SecureLink_Client", "SecureLink_Agent", "SecureLink_Core", "SecureLink_DP"] {
-            let run = Process()
-            run.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
-            run.arguments = ["-x", name]
-            run.standardOutput = Pipe()
-            do { try run.run(); run.waitUntilExit() } catch { return true }
-            if run.terminationStatus == 0 { return true }
-        }
-        return false
-    }
-    private var financeHomepageValidated = false
-    private var financeCampusValidated = false
-    private var financeTunnelStatus = "disconnected"
     var workbenchResources: [BackendUrlResource] = []
-    private var workbenchFailure: String?
     var pendingShortcutAfterConnect: CampusShortcut?
     @Published var activeTunnelInterface: String?
     @Published var activeVirtualIPv4: String?
@@ -243,11 +165,7 @@ final class ConnectionStateHolder: @unchecked Sendable {
             ? "Connecting to campus network; will open \"\(item.name)\" automatically once connected."
             : "正在为您连接校园网，连接成功后将自动打开「\(item.name)」。"
         if !running && !awaitingCallback {
-            if diagnosticEnabled {
-                prepareIndependentCAS()
-            } else {
-                start()
-            }
+            prepareIndependentCAS()
         }
     }
 
@@ -264,140 +182,47 @@ final class ConnectionStateHolder: @unchecked Sendable {
 
     private var dataSessionEngine: (engine: URL, socket: String, holdMs: Int, pingPeer: String,
                                     pingCount: Int, digServer: String?, digName: String?)? {
-        let args = ProcessInfo.processInfo.arguments
-        guard backendConfigurationTestEnabled else { return nil }
-        guard let index = args.firstIndex(of: "--data-session-engine"), args.indices.contains(index + 1) else {
-            guard standaloneDefaultMode,
-                  !args.contains("--handshake-probe"),
-                  !args.contains("--engine-evaluator") else { return nil }
-            let inAppBundle = Bundle.main.bundleURL.pathExtension == "app"
-            let bundleCandidates: [URL] = [
-                Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("executor-engine"),
-                FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/szu-securelink/executor-engine"),
-                Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("szu-openvpn3-data-engine"),
-                Bundle.main.resourceURL?.appendingPathComponent("szu-openvpn3-data-engine"),
-            ].compactMap { $0 }
-            let cwdCandidates: [URL] = inAppBundle ? [] : [
-                URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("out/executor-build/executor-engine"),
-                URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("out/openvpn3/build/szu-openvpn3-data-engine"),
-            ]
-            let candidates = (bundleCandidates + cwdCandidates).filter {
-                FileManager.default.isExecutableFile(atPath: $0.path)
-            }
-            let expectedCDHash = (try? String(contentsOfFile: "/Library/PrivilegedHelperTools/local.szu.securelink.helper-executor-engine.cdhash", encoding: .utf8))?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let matched = candidates.first { url in
-                guard let expected = expectedCDHash, !expected.isEmpty else { return false }
-                return Self.cdhashHex(of: url) == expected
-            }
-            guard let bundled = matched ?? candidates.first else {
-                return nil
-            }
-            return (
-                engine: bundled,
-                socket: "/var/run/local.szu.securelink.helper-executor",
-                holdMs: 560_000,
-                pingPeer: "1.1.96.1",
-                pingCount: 3,
-                digServer: "192.168.247.6",
-                digName: "cwpt.szu.edu.cn"
-            )
+        let inAppBundle = Bundle.main.bundleURL.pathExtension == "app"
+        let bundleCandidates: [URL] = [
+            Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("executor-engine"),
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/szu-securelink/executor-engine"),
+            Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("szu-openvpn3-data-engine"),
+            Bundle.main.resourceURL?.appendingPathComponent("szu-openvpn3-data-engine"),
+        ].compactMap { $0 }
+        let cwdCandidates: [URL] = inAppBundle ? [] : [
+            URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("out/executor-build/executor-engine"),
+            URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("out/openvpn3/build/szu-openvpn3-data-engine"),
+        ]
+        let candidates = (bundleCandidates + cwdCandidates).filter {
+            FileManager.default.isExecutableFile(atPath: $0.path)
         }
-        func value(_ name: String) -> String? {
-            guard let at = args.firstIndex(of: name), args.indices.contains(at + 1) else { return nil }
-            return args[at + 1]
+        let expectedCDHash = (try? String(contentsOfFile: "/Library/PrivilegedHelperTools/local.szu.securelink.helper-executor-engine.cdhash", encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let matched = candidates.first { url in
+            guard let expected = expectedCDHash, !expected.isEmpty else { return false }
+            return Self.cdhashHex(of: url) == expected
         }
-        guard let socket = value("--executor-socket"), let peer = value("--ping-peer"),
-              let hold = Int(value("--hold-ms") ?? ""), hold >= 1, hold <= 560_000,
-              let count = Int(value("--ping-count") ?? "3"), count >= 1, count <= 10 else { return nil }
-        var address = in_addr()
-        guard !socket.isEmpty, socket.utf8.count <= 100, socket.rangeOfCharacter(from: .controlCharacters) == nil,
-              peer.withCString({ inet_pton(AF_INET, $0, &address) }) == 1 else { return nil }
-        // Optional in-tunnel DNS probe, all-or-nothing.
-        var digServer: String?, digName: String?
-        if value("--dig-server") != nil || value("--dig-name") != nil {
-            guard let server = value("--dig-server"), let name = value("--dig-name"),
-                  !server.isEmpty, server.utf8.count <= 15,
-                  server.withCString({ inet_pton(AF_INET, $0, &address) }) == 1,
-                  OpenVPNDataSession.validQueryName(name) else { return nil }
-            digServer = server; digName = name
+        guard let bundled = matched ?? candidates.first else {
+            return nil
         }
-        return (URL(fileURLWithPath: args[index + 1]), socket, hold, peer, count, digServer, digName)
-    }
-    private var engineEvaluator: URL? {
-        let args = ProcessInfo.processInfo.arguments
-        guard backendConfigurationTestEnabled, let index = args.firstIndex(of: "--engine-evaluator"), args.indices.contains(index + 1) else { return nil }
-        return URL(fileURLWithPath: args[index + 1])
+        return (
+            engine: bundled,
+            socket: "/var/run/local.szu.securelink.helper-executor",
+            holdMs: 560_000,
+            pingPeer: "1.1.96.1",
+            pingCount: 3,
+            digServer: "192.168.247.6",
+            digName: "cwpt.szu.edu.cn"
+        )
     }
     private var backendTask: Task<Void, Never>?
     private let backendSession = BackendAuthenticationSession()
-    private var backendAuthenticationValidated = false
-    private var backendUserLogout = "not-requested"
-    let connectionTestEnabled = ProcessInfo.processInfo.arguments.contains("--cas-connect-test")
-    var diagnosticEnabled: Bool { backendTestEnabled || connectionTestEnabled || ProcessInfo.processInfo.arguments.contains("--cas-preauthentication-test") }
     @Published var awaitingCallback = false
     var connectionPhase = "idle"
-    private var phases: [String] = []
-    private var authenticationShape: [String: String] = [:]
-    private var endpointShape: [String: String] = [:]
     private var callbackGate = CASCallbackGate()
-    private var diagnosticSettings: NativeSettings?
-    private var cancellation: Cancellation?
     private var generation = UUID()
-    private var reopenOfficial = false
-    private func writeReport(finished: Bool = false, failed: Bool = false) {
-        let arguments = ProcessInfo.processInfo.arguments
-        guard let index = arguments.firstIndex(of: "--session-report"), arguments.indices.contains(index + 1) else { return }
-        let url = URL(fileURLWithPath: arguments[index + 1])
-        let serializedResources: [[String: String]] = workbenchResources.map { resource in
-            var item: [String: String] = ["id": resource.id, "name": resource.name, "url": resource.url]
-            if let type = resource.type { item["type"] = type }
-            return item
-        }
-        let report: [String: Any] = ["schemaVersion": 1, "mode": financeMode ? "bounded-standalone-finance" : (backendTestEnabled ? (backendConfigurationTestEnabled ? "bounded-direct-backend-configuration" : "bounded-direct-backend-preauthentication") : (connectionTestEnabled ? "bounded-cas-connection" : "bounded-cas-preauthentication")),
-            "backendAuthentication": backendSession.state.rawValue, "officialIPCUsed": !backendTestEnabled,
-            "backendAuthenticationValidated": backendAuthenticationValidated, "backendUserLogout": backendUserLogout,
-            "serverRevocationVerified": false, "backendConfigurationValidated": backendConfigurationValidated,
-            "backendConfiguration": backendConfigurationReceipt, "backendConfigurationFailure": backendConfigurationFailure, "backendEngineEvaluation": backendEngineEvaluation, "backendHandshake": backendHandshake, "backendDataSession": backendDataSession, "networkInputCollection": backendConfigurationTestEnabled ? "optional-fields-omitted" : "not-requested",
-            "workbenchResources": serializedResources,
-            "workbenchFailure": workbenchFailure ?? "none",
-            "tunnelInterface": activeTunnelInterface ?? "",
-            "virtualIPv4": activeVirtualIPv4 ?? "",
-            "phase": connectionPhase, "phases": phases, "tunnel": status.rawValue,
-            "endpointCheck": policy.endpointCheck.rawValue, "requiresReauthentication": policy.requiresReauthentication,
-            "endpointShape": endpointShape, "authenticationShape": authenticationShape, "finished": finished, "transportFailed": failed,
-            "campusValidated": financeMode ? financeCampusValidated : false,
-            "officialBackendStillRequired": financeMode ? backendStillRunning : true,
-            "financeHomepageValidated": financeMode ? financeHomepageValidated : false,
-            "sensitiveFieldsRecorded": false]
-        do {
-            let data = try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
-            try data.write(to: url, options: [.atomic])
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-        } catch { detail = "无法保存本次测试状态，请检查报告目录。" }
-    }
     func setConnectionPhase(_ phase: String) {
         connectionPhase = phase
-        if phases.last != phase { phases.append(phase); if phases.count > 64 { phases.removeFirst() } }
-        writeReport()
-    }
-    private func loadKey() -> Data? {
-        var keyURL = Bundle.main.url(forResource: "vendor-public-key", withExtension: "der")
-        if keyURL == nil {
-            let panel = NSOpenPanel()
-            panel.title = "选择已核验的服务公钥 vendor-public-key.der"
-            panel.canChooseDirectories = false
-            guard panel.runModal() == .OK else { return nil }
-            keyURL = panel.url
-        }
-        guard let url = keyURL, let key = try? Data(contentsOf: url), key.count <= 8192 else {
-            detail = "无法读取服务公钥。"; return nil
-        }
-        guard SHA256.hash(data: key).map({ String(format: "%02x", $0) }).joined() == "e3cad91855f033d1355592d3373813082964ecd296f63c0d84da728f81940824" else {
-            detail = "公钥与已核验安装包不一致，未连接服务。"
-            return nil
-        }
-        return key
     }
     private func mayStart() -> Bool {
         guard !running else { return false }
@@ -413,183 +238,31 @@ final class ConnectionStateHolder: @unchecked Sendable {
         }
         return true
     }
-    func start() {
-        guard !backendTestEnabled else { return }
-        guard mayStart(), let key = loadKey() else { return }
-        let cancel = Cancellation()
-        cancellation = cancel
-        generation = UUID()
-        let id = generation
-        running = true
-        status = .unknown
-        policy = PolicyObservation()
-        detail = "正在接入本机服务；并行运行官方界面可能影响会话。"
-        Task.detached { [self] in
-            do {
-                _ = try runNativeSession(publicKeyDER: key, port: 8234, duration: .seconds(3600), cancelled: { cancel.isCancelled() }, onStatus: { state in
-                    DispatchQueue.main.async { [self] in
-                        guard self.running, self.generation == id, !cancel.isCancelled() else { return }
-                        self.status = state
-                        self.detail = "仅反映隧道状态；校园资源与报账大厅需另行验证。"
-                    }
-                }, onPolicy: { observation in
-                    DispatchQueue.main.async { [self] in
-                        guard self.running, self.generation == id, !cancel.isCancelled() else { return }
-                        self.policy = observation
-                    }
-                })
-                await self.finish(id, failed: false)
-            } catch { await self.finish(id, failed: true, sessionBusy: (error as? SessionLeaseError) == .busy) }
-        }
-    }
-    func finish(_ id: UUID, failed: Bool, sessionBusy: Bool = false) {
-        guard generation == id else { return }
-        running = false
-        status = .unavailable
-        detail = failed ? "服务连接结束或协议校验失败。请打开官方客户端恢复。" : "监测已结束；未发送断网或退出登录命令。"
-        if sessionBusy { detail = "另一个轻量客户端或诊断程序正在使用服务，请先停止它。" }
-        cancellation = nil
-        if reopenOfficial { reopenOfficial = false; openOfficialApplication() }
-    }
     func prepareIndependentCAS() {
-        guard diagnosticEnabled, !awaitingCallback, mayStart() else { return }
-        if backendTestEnabled {
-            guard backendSession.state == .idle else { detail = "本次独立认证测试已结束，请重新启动测试。"; return }
-            callbackGate.begin(); awaitingCallback = true; phases = []
-            setConnectionPhase("discovering")
-            prepareBackendCAS()
+        guard !awaitingCallback, mayStart() else { return }
+        guard backendSession.state == .idle else {
+            detail = "本次独立认证测试已结束，请重新启动测试。"
             return
         }
-        do {
-            let directory = Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("cas-diagnostic", isDirectory: true)
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            diagnosticSettings = try VendorDistribution.settings(app: URL(fileURLWithPath: "/Applications/SecureLink/SecureLink.app"), pid: ProcessInfo.processInfo.processIdentifier, logPath: directory.appendingPathComponent("gui.log").path)
-            callbackGate.begin()
-            awaitingCallback = true
-            phases = []
-            authenticationShape = [:]
-            endpointShape = [:]
-            setConnectionPhase("discovering")
-            prepareCAS()
-        } catch {
-            diagnosticSettings = nil
-            detail = "已安装厂商材料未通过固定版本校验，未开始独立预认证。"
-        }
+        callbackGate.begin()
+        awaitingCallback = true
+        setConnectionPhase("discovering")
+        prepareBackendCAS()
     }
     func receiveCallback(_ url: URL) {
-        guard diagnosticEnabled, awaitingCallback, !running else { return }
+        guard awaitingCallback, !running else { return }
         do {
             let credential = try callbackGate.consume(url)
             awaitingCallback = false
-            if backendTestEnabled { authenticateBackend(credential); return }
-            guard mayStart(), let key = loadKey(), let settings = diagnosticSettings else { diagnosticSettings = nil; return }
-            diagnosticSettings = nil
-            let authentication = NativeAuthenticationAttempt(settings: settings, credential: credential, connectsTunnel: connectionTestEnabled)
-            let finalState = AuthenticationStateHolder()
-            let connectionState = ConnectionStateHolder()
-            let cancel = Cancellation()
-            cancellation = cancel
-            generation = UUID()
-            let id = generation
-            running = true
-            detail = connectionTestEnabled ? "正在完成学校认证并初始化连接策略。" : "正在执行一次预配置、设置和预认证验证；不会发送连接命令。"
-            setConnectionPhase("bootstrapping")
-            let isConnectionTest = connectionTestEnabled
-            Task.detached { [self] in
-                do {
-                    _ = try runNativeSession(publicKeyDER: key, port: 8234, duration: .seconds(isConnectionTest ? 180 : 40), cancelled: { cancel.isCancelled() }, onStatus: { state in
-                        DispatchQueue.main.async { [self] in
-                            guard self.running, self.generation == id, !cancel.isCancelled() else { return }
-                            self.status = state; self.writeReport()
-                        }
-                    }, onPolicy: { observation in
-                        DispatchQueue.main.async { [self] in
-                            guard self.running, self.generation == id, !cancel.isCancelled() else { return }
-                            self.policy = observation; self.writeReport()
-                        }
-                    }, authentication: authentication, onAuthentication: { state in
-                        finalState.set(state)
-                        DispatchQueue.main.async { [self] in
-                            guard self.running, self.generation == id, !cancel.isCancelled() else { return }
-                            self.detail = Self.authenticationText(state)
-                        }
-                    }, onConnection: { state in
-                        connectionState.set(state)
-                        DispatchQueue.main.async { [self] in
-                            guard self.running, self.generation == id, !cancel.isCancelled() else { return }
-                            let presentation = Self.connectionPresentation(state)
-                            self.detail = presentation.text
-                            self.setConnectionPhase(presentation.phase)
-                        }
-                    }, onAuthenticationShape: { shape in
-                        DispatchQueue.main.async { [self] in
-                            guard self.running, self.generation == id, !cancel.isCancelled() else { return }
-                            self.authenticationShape = shape; self.writeReport()
-                        }
-                    }, onEndpointShape: { shape in
-                        DispatchQueue.main.async { [self] in
-                            guard self.running, self.generation == id, !cancel.isCancelled() else { return }
-                            self.endpointShape = shape; self.writeReport()
-                        }
-                    })
-                    if isConnectionTest { await self.finishConnection(id, failed: false, state: connectionState.get()) }
-                    else { await self.finishDiagnostic(id, failed: false, state: finalState.get()) }
-                } catch {
-                    if isConnectionTest { await self.finishConnection(id, failed: true, state: connectionState.get()) }
-                    else { await self.finishDiagnostic(id, failed: true, state: finalState.get()) }
-                }
-            }
+            authenticateBackend(credential)
         } catch {
-            callbackGate.cancel(); awaitingCallback = false; diagnosticSettings = nil
+            callbackGate.cancel()
+            awaitingCallback = false
             detail = "回跳参数、组织或时限未通过验证；未向服务提交令牌。"
         }
     }
-    private static func connectionPresentation(_ state: CASConnectionFlow.State) -> (phase: String, text: String) {
-        switch state {
-        case .idle: return ("bootstrapping", "等待服务完成组织配置。")
-        case .preAuthenticating: return ("preauthenticating", "正在验证学校登录结果。")
-        case .initializingPolicy: return ("initializing-policy", "连接请求已发送，正在初始化学校策略。")
-        case .initialized: return ("initialized", "登录后的配置已同步；连接状态与安全检查结果分别显示。")
-        case .deviceRejected: return ("device-rejected", "学校服务拒绝了此设备，请处理设备信用要求。")
-        case .informationRequired: return ("information-required", "学校服务要求补全账户信息。")
-        case .serviceRejected: return ("service-rejected", "服务拒绝本次连接，未重复提交登录令牌。")
-        case .unsupportedResponse: return ("unsupported-response", "服务返回了尚未支持的数据格式，本次连接已停止。")
-        case .timedOut: return ("timed-out", "连接或策略初始化超时，未重复提交登录令牌。")
-        case .cancelled: return ("cancelled", "本次连接会话已结束。")
-        }
-    }
-    private func finishConnection(_ id: UUID, failed: Bool, state: CASConnectionFlow.State) {
-        guard generation == id else { return }
-        running = false; cancellation = nil; status = .unavailable
-        let presentation = Self.connectionPresentation(state)
-        detail = failed ? "本机服务通信失败。可打开官方客户端恢复连接。" : presentation.text
-        setConnectionPhase(presentation.phase)
-        writeReport(finished: true, failed: failed)
-        if reopenOfficial { reopenOfficial = false; openOfficialApplication() }
-    }
-    private static func authenticationText(_ state: CASPreAuthentication.State) -> String {
-        switch state {
-        case .idle: return "等待原生服务完成组织预配置。"
-        case .awaitingReply: return "设置已发送，等待一次预认证结果。"
-        case .deviceRejected: return "服务拒绝设备信用，请通过官方客户端处理。"
-        case .informationRequired: return "服务要求补全用户信息，请通过官方客户端处理。"
-        case .responseValidated: return "预认证响应格式已验证；未建立隧道，学校策略尚未初始化。"
-        case .serviceRejected: return "服务拒绝本次预认证；未重试令牌。"
-        case .unsupportedResponse: return "预认证响应包含尚未支持的格式；验证已停止。"
-        case .timedOut: return "预认证超时；未重试令牌。"
-        case .cancelled: return "预认证验证已取消或服务已关闭。"
-        }
-    }
-    private func finishDiagnostic(_ id: UUID, failed: Bool, state: CASPreAuthentication.State) {
-        guard generation == id else { return }
-        running = false; cancellation = nil; status = .unavailable
-        detail = failed ? "独立预认证传输失败，未发送连接命令。请恢复官方客户端。" : Self.authenticationText(state)
-        writeReport(finished: true, failed: failed)
-        if reopenOfficial { reopenOfficial = false; openOfficialApplication() }
-    }
     private func prepareBackendCAS() {
-        let cancel = Cancellation()
-        cancellation = cancel; generation = UUID()
+        generation = UUID()
         let id = generation
         running = true
         detail = "正在直接查询学校登录入口；本次不经官方后台。"
@@ -605,6 +278,8 @@ final class ConnectionStateHolder: @unchecked Sendable {
         running = true
         generation = UUID()
         let id = generation
+        var backendUserLogout = "not-requested"
+        var tunnelVerified = false
         setConnectionPhase("backend-authenticating")
         detail = "正在独立完成学校预认证，设备信用和二次认证仍由服务判断。"
         backendTask = Task { [self] in
@@ -619,9 +294,8 @@ final class ConnectionStateHolder: @unchecked Sendable {
             catch { self.backendSession.transportFailed() }
             guard self.generation == id else { return }
             let accepted = self.backendSession.state == .ready
-            self.backendAuthenticationValidated = accepted
             self.setConnectionPhase(accepted ? "backend-authenticated" : "backend-authentication-stopped")
-            if accepted && self.backendConfigurationTestEnabled {
+            if accepted {
                 self.detail = self.dataSessionEngine != nil
                     ? "认证通过，正在拉取零信任网络配置与工作台资源..."
                     : "认证通过，正在直接取得连接配置；本次不建立隧道。"
@@ -644,32 +318,13 @@ final class ConnectionStateHolder: @unchecked Sendable {
                         try Task.checkCancellation()
                         configuration = fetchedConfig
                         self.workbenchResources = resourceCollection.resources
-                        self.workbenchFailure = resourceCollection.failure
                         self.catalog?.syncWithWorkbench(self.workbenchResources)
                     }
-                    let receipt = try JSONEncoder().encode(configuration.receipt)
-                    self.backendConfigurationReceipt = (try JSONSerialization.jsonObject(with: receipt)) as? [String: Any] ?? [:]
-                    self.backendConfigurationValidated = true
                     self.setConnectionPhase("backend-configuration-received")
-                    if let evaluator = self.engineEvaluator {
-                        do {
-                            let evaluation = try await OpenVPNEvaluation.evaluate(configuration, executable: evaluator)
-                            try Task.checkCancellation()
-                            let data = try JSONEncoder().encode(evaluation)
-                            self.backendEngineEvaluation = (try JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
-                        } catch let error as OpenVPNEvaluationError {
-                            self.backendEngineEvaluation = ["error": String(describing: error)]
-                        } catch { self.backendEngineEvaluation = ["error": "cancelled-or-unavailable"] }
-                        self.setConnectionPhase("backend-engine-evaluated")
-                    }
                     if let session = self.dataSessionEngine {
-                        // Merged data engine: config rides the in-memory pipe,
-                        // the executor transaction delivers the utun fd, and
-                        // the receipt proves the in-tunnel ping got replies.
                         self.status = .connecting
                         self.detail = "正在建立零信任网络隧道并同步深大内网路由与 DNS..."
                         self.setConnectionPhase("backend-data-session-preparing")
-                        let metadataShape = self.backendSession.handshakeMetadataShape
                         do {
                             var resolveDomains: [String] = []
                             var seenDomains: Set<String> = []
@@ -703,7 +358,6 @@ final class ConnectionStateHolder: @unchecked Sendable {
                                             self.activeTunnelInterface = active.interface
                                             self.activeVirtualIPv4 = active.virtualIPv4
                                             self.status = .connected
-                                            self.financeTunnelStatus = "connected"
                                             let vipText = active.virtualIPv4.map { "，虚拟IP: \($0)" } ?? ""
                                             self.detail = "校园网已连接（接口 \(active.interface)\(vipText)）。可直接打开下方校内服务或在默认浏览器访问。"
                                             self.setConnectionPhase("standalone-tunnel-connected")
@@ -725,12 +379,7 @@ final class ConnectionStateHolder: @unchecked Sendable {
                                                 guard self.generation == id else { return }
                                                 if !refreshed.resources.isEmpty {
                                                     self.workbenchResources = refreshed.resources
-                                                    self.workbenchFailure = nil
                                                     self.catalog?.syncWithWorkbench(self.workbenchResources)
-                                                    self.writeReport()
-                                                } else if let failure = refreshed.failure {
-                                                    self.workbenchFailure = failure
-                                                    self.writeReport()
                                                 }
                                             }
                                         }
@@ -747,129 +396,14 @@ final class ConnectionStateHolder: @unchecked Sendable {
                             guard let receipt = lastReceipt else { throw OpenVPNEvaluationError.unavailable }
                             self.activeDataSessionStop = nil
                             try Task.checkCancellation()
-                            let data = try JSONEncoder().encode(receipt)
-                            var payload = (try JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
-                            // Only the separately named private artifact holds networking details.
-                            payload.removeValue(forKey: "plan")
-                            payload["planComplete"] = receipt.plan?.complete ?? false
-                            payload["planFailure"] = receipt.plan?.failure ?? "none"
-                            self.backendDataSession = payload
-                            if let plan = receipt.plan {
-                                let arguments = ProcessInfo.processInfo.arguments
-                                if let index = arguments.firstIndex(of: "--session-report"), arguments.indices.contains(index + 1) {
-                                    let target = URL(fileURLWithPath: arguments[index + 1]).deletingLastPathComponent().appendingPathComponent("captured-network-plan.json")
-                                    let encoded = try JSONEncoder().encode(plan)
-                                    try encoded.write(to: target, options: [.atomic])
-                                    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
-                                } else if !self.standaloneDefaultMode {
-                                    throw OpenVPNEvaluationError.invalidReceipt
-                                }
-                            }
-                            self.handshakeValidated = receipt.verified
-                            // Standalone finance acceptance: cite the homepage
-                            // observation only when the tunnel really carried the
-                            // session and the page validated on our own path.
-                            if self.financeMode {
-                                self.financeTunnelStatus = receipt.verified ? "connected" : "disconnected"
-                                self.status = receipt.verified ? .connected : .disconnected
-                                var homepageValidated = false
-                                if let path = self.homepageObservationPath,
-                                   let data = try? Data(contentsOf: path),
-                                   let observation = try? JSONDecoder().decode(FinanceHomepageObservation.self, from: data) {
-                                    homepageValidated = observation.validated && receipt.verified
-                                }
-                                self.financeHomepageValidated = homepageValidated
-                                self.financeCampusValidated = receipt.verified && homepageValidated && !self.backendStillRunning
-                                if homepageValidated {
-                                    self.setConnectionPhase("finance-homepage-validated")
-                                }
-                            } else {
-                                self.status = .disconnected
-                            }
+                            tunnelVerified = receipt.verified
+                            self.status = .disconnected
                             self.setConnectionPhase(receipt.verified ? "backend-data-session-verified" : "backend-data-session-ended")
-                        } catch let error as BackendHandshakePreparationError {
-                            self.backendDataSession = ["error": String(describing: error)]
-                        } catch let error as BackendSessionError {
-                            self.backendDataSession = ["error": "session-" + String(describing: error)]
-                        } catch let error as UVMetadata.BuildError {
-                            self.backendDataSession = ["error": "metadata-" + String(describing: error)]
-                        } catch let error as BackendDiscoveryError {
-                            self.backendDataSession = ["error": "public-material-" + String(describing: error)]
-                        } catch is NativeDeviceProfileError {
-                            self.backendDataSession = ["error": "device-profile-unavailable"]
-                        } catch is NativeDeviceIdentityError {
-                            self.backendDataSession = ["error": "device-identity-unavailable"]
-                        } catch let error as OpenVPNEvaluationError {
-                            self.backendDataSession = ["error": String(describing: error)]
                         } catch {
-                            self.backendDataSession = ["error": Task.isCancelled ? "cancelled" : "data-session-unavailable"]
+                            self.activeDataSessionStop = nil
                         }
-                        self.activeDataSessionStop = nil
-                        self.backendDataSession["identityShape"] = metadataShape
-                    } else if let probe = self.handshakeProbe {
-                        self.setConnectionPhase("backend-handshake-preparing")
-                        let metadataShape = self.backendSession.handshakeMetadataShape
-                        do {
-                            let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-                            let input = try BackendHandshakePreparation.prepare(session: self.backendSession, configuration: configuration,
-                                identityDirectory: support.appendingPathComponent("SZUSecureLink", isDirectory: true),
-                                nowMilliseconds: Int64(Date().timeIntervalSince1970 * 1000))
-                            let capturePlan = ProcessInfo.processInfo.arguments.contains("--capture-plan")
-                            var receipt = try await OpenVPNHandshake.perform(input, executable: probe, capturePlan: capturePlan)
-                            let networkAllowed = ProcessInfo.processInfo.arguments.contains("--allow-handshake")
-                            if receipt.reason == "input-validated" && networkAllowed {
-                                self.setConnectionPhase("backend-handshake-running")
-                                receipt = try await OpenVPNHandshake.perform(input, executable: probe, allowNetwork: true, capturePlan: capturePlan)
-                            }
-                            try Task.checkCancellation()
-                            let data = try JSONEncoder().encode(receipt)
-                            self.backendHandshake = (try JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
-                            // Only the separately named private artifact holds networking details.
-                            self.backendHandshake.removeValue(forKey: "plan")
-                            self.backendHandshake["planComplete"] = receipt.plan?.complete ?? false
-                            self.backendHandshake["planFailure"] = receipt.plan?.failure ?? "none"
-                            if let plan = receipt.plan {
-                                let arguments = ProcessInfo.processInfo.arguments
-                                if let index = arguments.firstIndex(of: "--session-report"), arguments.indices.contains(index + 1) {
-                                    let target = URL(fileURLWithPath: arguments[index + 1]).deletingLastPathComponent().appendingPathComponent("captured-network-plan.json")
-                                    let encoded = try JSONEncoder().encode(plan)
-                                    try encoded.write(to: target, options: [.atomic])
-                                    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
-                                } else if !self.standaloneDefaultMode {
-                                    throw OpenVPNEvaluationError.invalidReceipt
-                                }
-                            }
-                            self.handshakeValidated = networkAllowed
-                                ? receipt.tunnelSetupRequested && !receipt.unexpectedConnected && receipt.reason == "tunnel-boundary" && (!capturePlan || receipt.plan?.complete == true)
-                                : receipt.reason == "input-validated" && !receipt.connectCalled
-                        } catch let error as BackendHandshakePreparationError {
-                            self.backendHandshake = ["error": String(describing: error)]
-                        } catch let error as BackendSessionError {
-                            self.backendHandshake = ["error": "session-" + String(describing: error)]
-                        } catch let error as UVMetadata.BuildError {
-                            self.backendHandshake = ["error": "metadata-" + String(describing: error)]
-                        } catch let error as BackendDiscoveryError {
-                            self.backendHandshake = ["error": "public-material-" + String(describing: error)]
-                        } catch is NativeDeviceProfileError {
-                            self.backendHandshake = ["error": "device-profile-unavailable"]
-                        } catch is NativeDeviceIdentityError {
-                            self.backendHandshake = ["error": "device-identity-unavailable"]
-                        } catch let error as OpenVPNEvaluationError {
-                            self.backendHandshake = ["error": String(describing: error)]
-                        } catch {
-                            self.backendHandshake = ["error": Task.isCancelled ? "cancelled" : "handshake-material-unavailable"]
-                        }
-                        self.backendHandshake["identityShape"] = metadataShape
-                        self.setConnectionPhase("backend-handshake-ended")
                     }
-                } catch let error as BackendNetworkConfigurationFailure {
-                    self.backendConfigurationFailure = error.shape
-                    self.setConnectionPhase("backend-configuration-stopped")
-                } catch let error as BackendDiscoveryError {
-                    self.backendConfigurationFailure = ["transport": String(describing: error)]
-                    self.setConnectionPhase("backend-configuration-stopped")
                 } catch {
-                    self.backendConfigurationFailure = ["reason": Task.isCancelled ? "cancelled" : "unavailable"]
                     self.setConnectionPhase("backend-configuration-stopped")
                 }
             }
@@ -877,7 +411,7 @@ final class ConnectionStateHolder: @unchecked Sendable {
                 self.detail = self.dataSessionEngine != nil
                     ? "正在断开零信任网络隧道并退出本次用户会话..."
                     : "独立预认证通过；正在退出本次用户会话。本次未建立隧道。"
-                if !self.financeMode && self.dataSessionEngine != nil {
+                if self.dataSessionEngine != nil {
                     self.status = .disconnecting
                 }
                 do {
@@ -885,69 +419,41 @@ final class ConnectionStateHolder: @unchecked Sendable {
                     self.backendSession.cancel()
                     let receipt = try await attempt.perform()
                     try Task.checkCancellation()
-                    self.backendUserLogout = receipt.userLogoutAccepted ? "accepted" : "rejected"
-                } catch is CancellationError { self.backendUserLogout = "cancelled" }
-                catch { self.backendUserLogout = "failed" }
+                    backendUserLogout = receipt.userLogoutAccepted ? "accepted" : "rejected"
+                } catch is CancellationError { backendUserLogout = "cancelled" }
+                catch { backendUserLogout = "failed" }
                 self.backendSession.cancel()
-                if !self.financeMode && self.dataSessionEngine != nil {
+                if self.dataSessionEngine != nil {
                     self.status = .disconnected
                 }
                 self.setConnectionPhase("backend-test-ended")
             }
             self.running = false; self.backendTask = nil
-            let configResult = self.backendConfigurationTestEnabled ? (self.backendConfigurationValidated ? "连接配置已取得；" : "连接配置尚未取得；") : ""
             if self.dataSessionEngine != nil {
-                let tunnelSummary = self.handshakeValidated ? "零信任隧道已验证；" : "零信任隧道未完成验证；"
+                let tunnelSummary = tunnelVerified ? "零信任隧道已验证；" : "零信任隧道未完成验证；"
                 self.detail = accepted
-                    ? "会话已结束：\(configResult)\(tunnelSummary)退出结果：\(self.backendUserLogout)。"
+                    ? "会话已结束：\(tunnelSummary)退出结果：\(backendUserLogout)。"
                     : "独立预认证尚未完成：\(self.backendSession.state.rawValue)。"
             } else {
-                self.detail = accepted ? "独立预认证通过；\(configResult)退出结果：\(self.backendUserLogout)。本次未建立隧道，校园访问仍未验收。" : "独立预认证尚未完成：\(self.backendSession.state.rawValue)。本次未建立隧道。"
+                self.detail = accepted ? "独立预认证通过；退出结果：\(backendUserLogout)。本次未建立隧道，校园访问仍未验收。" : "独立预认证尚未完成：\(self.backendSession.state.rawValue)。本次未建立隧道。"
             }
-            self.writeReport(finished: true, failed: !accepted || self.backendUserLogout != "accepted" || (self.backendConfigurationTestEnabled && !self.backendConfigurationValidated) || (self.engineEvaluator != nil && self.backendEngineEvaluation["accepted"] as? Bool != true) || ((self.handshakeProbe != nil || self.dataSessionEngine != nil) && !self.handshakeValidated))
             self.emitWorkerLine("DISCONNECTED: \(self.detail)")
             if self.headlessWorkerMode { Darwin.exit(0) }
-            if self.reopenOfficial { self.reopenOfficial = false; self.openOfficialApplication() }
-        }
-    }
-    func prepareCAS() {
-        guard !backendTestEnabled else { return }
-        guard mayStart(), let key = loadKey() else {
-            callbackGate.cancel(); awaitingCallback = false; diagnosticSettings = nil
-            return
-        }
-        let cancel = Cancellation()
-        cancellation = cancel
-        generation = UUID()
-        let id = generation
-        let holder = LoginURLHolder()
-        running = true
-        status = .unknown
-        detail = "正在向本机服务查询 szu 的 CAS 入口；不读取校园密码。"
-        Task.detached { [self] in
-            do {
-                _ = try runNativeSession(publicKeyDER: key, port: 8234, duration: .seconds(20), cancelled: { cancel.isCancelled() }, discoverCAS: true, onCASURL: { holder.set($0) })
-                let url = cancel.isCancelled() ? nil : holder.take()
-                await self.finishCAS(id, url: url)
-            } catch { await self.finishCAS(id, url: nil) }
         }
     }
     private func finishCAS(_ id: UUID, url: URL?) {
         guard generation == id else { return }
-        let wasCancelled = cancellation?.isCancelled() ?? true
         running = false
-        cancellation = nil
         status = .unavailable
-        if reopenOfficial { reopenOfficial = false; openOfficialApplication(); return }
-        guard !wasCancelled, let url else {
-            callbackGate.cancel(); awaitingCallback = false; diagnosticSettings = nil
-            detail = "CAS 地址获取已取消、超时或未通过校验。可通过官方客户端登录。"
+        guard let url else {
+            callbackGate.cancel(); awaitingCallback = false
+            detail = "CAS 地址获取已取消、超时或未通过校验。"
             emitWorkerLine("DISCONNECTED: \(detail)")
-            if backendTestEnabled { backendSession.cancel(); writeReport(finished: true, failed: true) }
+            backendSession.cancel()
             if headlessWorkerMode { Darwin.exit(0) }
             return
         }
-        detail = awaitingCallback ? "已打开学校 CAS 登录页，请在浏览器完成登录（5 分钟内有效）。" : "已打开学校 CAS；登录后的回跳仍交给官方 SecureLink。当前未接管协议。"
+        detail = awaitingCallback ? "已打开学校 CAS 登录页，请在浏览器完成登录（5 分钟内有效）。" : "已打开学校 CAS。"
         if awaitingCallback { setConnectionPhase("waiting-for-browser") }
         if headlessWorkerMode {
             let bundleID = (Bundle.main.bundleIdentifier ?? "local.szu.securelink.preview") as CFString
@@ -1001,21 +507,10 @@ final class ConnectionStateHolder: @unchecked Sendable {
             activeDataSessionStop = nil
             stopEngine()
         }
-        cancellation?.cancel(); backendTask?.cancel(); backendSession.cancel(); status = .unavailable
+        backendTask?.cancel(); backendSession.cancel(); status = .unavailable
         activeTunnelInterface = nil; activeVirtualIPv4 = nil
-        callbackGate.cancel(); awaitingCallback = false; diagnosticSettings = nil
-        if backendTestEnabled { writeReport(finished: true, failed: true) }
+        callbackGate.cancel(); awaitingCallback = false
     }
-    func officialLogin() {
-        callbackGate.cancel(); awaitingCallback = false; diagnosticSettings = nil
-        if backendTestEnabled && !running { stop(); openOfficialApplication(); return }
-        if running { reopenOfficial = true; stop(); return }
-        openOfficialApplication()
-    }
-    private func openOfficialApplication() {
-        NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: "/Applications/SecureLink/SecureLink.app"), configuration: .init()) { _, _ in }
-    }
-    var hasStandaloneDataSession: Bool { dataSessionEngine != nil }
     func statusText(english: Bool) -> String {
         if english {
             switch status {
@@ -1192,9 +687,6 @@ struct WorkbenchRootView: View {
                 return
             }
             NSApp.activate(ignoringOtherApps: true)
-            if !session.standaloneDefaultMode && session.backendTestEnabled && session.hasStandaloneDataSession && !session.running && !session.awaitingCallback {
-                session.prepareIndependentCAS()
-            }
         }
         .onOpenURL { coordinator.session.receiveCallback($0) }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
@@ -1258,11 +750,7 @@ struct ConnectionStatusCardView: View {
                     .controlSize(.regular)
                 } else {
                     Button(chrome.isEnglishLocale ? "Connect" : "连接") {
-                        if session.diagnosticEnabled {
-                            session.prepareIndependentCAS()
-                        } else {
-                            session.start()
-                        }
+                        session.prepareIndependentCAS()
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(WorkbenchChromeStore.accentColor)
@@ -1291,7 +779,7 @@ struct ConnectionStatusCardView: View {
             if showNetworkDetails {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 16) {
-                        Text("IPv4: \(session.activeVirtualIPv4 ?? "1.1.105.34")")
+                        Text("IPv4: \(session.activeVirtualIPv4 ?? "1.1.96.100")")
                             .font(.system(size: 12, design: .monospaced))
                         Text("Interface: \(session.activeTunnelInterface ?? "utun4")")
                             .font(.system(size: 12, design: .monospaced))
@@ -1301,13 +789,6 @@ struct ConnectionStatusCardView: View {
                             .font(.system(size: 12))
                     }
                     .foregroundStyle(.secondary)
-                    if !session.backendTestEnabled {
-                        HStack(spacing: 8) {
-                            Button("CAS 登录") { session.officialLogin() }.controlSize(.small)
-                            Button("原版回跳入口") { session.prepareCAS() }.controlSize(.small)
-                                .disabled(session.running || session.awaitingCallback)
-                        }
-                    }
                 }
                 .padding(10)
                 .background(Color.secondary.opacity(0.08))
@@ -1540,11 +1021,7 @@ struct TrayMenuPopoverView: View {
                     .controlSize(.small)
                 } else {
                     Button(chrome.isEnglishLocale ? "Connect" : "连接") {
-                        if session.diagnosticEnabled {
-                            session.prepareIndependentCAS()
-                        } else {
-                            session.start()
-                        }
+                        session.prepareIndependentCAS()
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(WorkbenchChromeStore.accentColor)
@@ -1645,7 +1122,7 @@ struct AboutSheetView: View {
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
-                Text("Sparkle Feed: \(chrome.sparkleConfig.feedURL)")
+                Text("GitHub Releases: semantic-craft/szu-securelink-lite")
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(.secondary)
                 Text(chrome.aboutMetadata.attributionText)

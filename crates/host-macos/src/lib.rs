@@ -1,8 +1,7 @@
 //! Versioned, thread-confined C ABI and native macOS AppKit host bridge.
 //!
 //! The main `szu-securelink-rs` crate forbids `unsafe_code`; this crate is the isolated C ABI
-//! boundary that native AppKit Objective-C++ (`platforms/macos/src/SecureLinkNativeApp.mm`) links against,
-//! mirroring `metasequoiaime/msime`'s `crates/host-api` + `2026-10-18-apple-rust-client-table.md`.
+//! boundary that native AppKit Objective-C++ (`platforms/macos/src/SecureLinkNativeApp.mm`) links against.
 
 #![allow(unsafe_code)]
 

@@ -36,13 +36,13 @@ PLAN = {
 # Trusted bootstrap: verified suffixes are the school's CAS-verified domain.
 CONTEXT = {
     "sessionID": "5e1c0b7a-3d44-4a5f-8b6e-1f2a3c4d5e6f",
-    # Unit-4 observation window: the audited transaction lifetime covers a
+    # Observation window: the audited transaction lifetime covers a
     # five-minute hold; official sessions run longer, so this is our bound.
     "durationSeconds": 900, "remotePort": 443,
     "verifiedDNSSuffixes": ["szu.edu.cn"],
 }
 
-# Unit-4 machinery probe: TEST-NET-3 delta, disjoint from the base plan's
+# Delta probe: TEST-NET-3 delta, disjoint from the base plan's
 # TEST-NET-1 routes so the three-state route check has a distinct marker.
 UPDATE_PLAN = dict(PLAN)
 UPDATE_PLAN["routes"] = [{"address": "203.0.113.0", "prefixLength": 24, "metric": -1, "ipv6": False}]

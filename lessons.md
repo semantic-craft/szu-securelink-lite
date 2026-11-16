@@ -27,7 +27,7 @@
 **隧道激活以 `ifconfig utun<N>` 出现 `1.1.x.x --> 1.1.96.1` 为准，看门狗只做激活接管不做定时强杀，窗口层无条件采信 `TunnelActive` 并拒绝非连接态的迟到 `PHASE:`。**
 
 - 标签：#状态机 #并发 #验收
-- 起因与后果：用户两次反馈客户端卡在「正在连接中... 正在建立零信任网络隧道并同步深大内网路由与 DNS...」。取证 `/var/log/szu-executor.log` 与 Unified Log 发现四重叠加原因：① 官方 `helper-executor` 在 `utun4` 配置好 `1.1.105.34 --> 1.1.96.1`（`t = +0.25s`）后，顺序派生 133 次 `/sbin/route -n add` 耗时 `11.4s` 才把 `utun4` fd 交还给 `executor-engine`；② `App.swift` 在 `--headless-tunnel-worker` 模式下先阻塞 `504ms` 拉取 `getApplications`，且 `detail.didSet` 与 `setConnectionPhase` 重复打印 `PHASE:`，触发 3 个并发看门狗线程每秒跑 `ping -c 1 -t 1 1.1.96.1` 阻塞 Actor 队列，并在 `14s` 时调用 `run_auto_repair` 误杀刚建好的隧道；③ 子进程退出时 `setConnectionPhase` 在非 `.connecting` 状态补发 `PHASE:`，且 Rust 侧忽略 `stderr` EOF；④ `WorkbenchWindow` 乐观递增 `self.generation` 后用 `generation < self.generation` 丢弃了 Actor 发回的 `TunnelActive`。
+- 起因与后果：用户两次反馈客户端卡在「正在连接中... 正在建立零信任网络隧道并同步深大内网路由与 DNS...」。取证 `/var/log/szu-executor.log` 与 Unified Log 发现四重叠加原因：① 官方 `helper-executor` 在 `utun4` 配置好 `1.1.96.100 --> 1.1.96.1`（`t = +0.25s`）后，顺序派生 133 次 `/sbin/route -n add` 耗时 `11.4s` 才把 `utun4` fd 交还给 `executor-engine`；② `App.swift` 在 `--headless-tunnel-worker` 模式下先阻塞 `504ms` 拉取 `getApplications`，且 `detail.didSet` 与 `setConnectionPhase` 重复打印 `PHASE:`，触发 3 个并发看门狗线程每秒跑 `ping -c 1 -t 1 1.1.96.1` 阻塞 Actor 队列，并在 `14s` 时调用 `run_auto_repair` 误杀刚建好的隧道；③ 子进程退出时 `setConnectionPhase` 在非 `.connecting` 状态补发 `PHASE:`，且 Rust 侧忽略 `stderr` EOF；④ `WorkbenchWindow` 乐观递增 `self.generation` 后用 `generation < self.generation` 丢弃了 Actor 发回的 `TunnelActive`。
 - 修复与证据：[`Sources/SecureLinkApp/App.swift`](Sources/SecureLinkApp/App.swift) 在 `--headless-tunnel-worker` 下跳过前置 `getApplications`、`onActive` 直接写 `FileHandle.standardError`、仅在 `status == .connecting` 时输出单次 `PHASE:`；[`src/tunnel_actor.rs`](src/tunnel_actor.rs) 引入 `ActorTunnelState` 与纯函数 `step_watchdog_tick`、用 `probe_connecting_campus_utun` 在 `utun` 挂载瞬间（`0.25s`）即判定激活、移除看门狗自动强杀并补齐 `stderr` EOF 收尾；[`src/gpui_window.rs`](src/gpui_window.rs) 无条件采信 `TunnelActive` 并限制 `ConnectingPhase` 仅在 `Connecting` 态生效。
 - 正确做法（Done right）：跨进程状态机用显式枚举 [`ActorTunnelState`](src/tunnel_actor.rs) 建模，把状态迁移抽成纯函数 [`step_watchdog_tick`](src/tunnel_actor.rs) 并与 [`WorkbenchWindow::apply_session_event`](src/gpui_window.rs) 一起写回归测试（参见 [AGENTS.md](AGENTS.md) 规则表）。
 - 验证点：运行 `cargo test --offline test_beginner_auto_connect_tray_pins_and_sparkle` 与 `cargo clippy --offline --all-targets -- -D warnings`，核对 `wc -l src/*.rs` 所有文件不超过 400 行。
@@ -39,7 +39,7 @@
 
 - 标签：#UI #状态栏 #验收
 - 起因与后果：① 初版菜单栏图标由辅助子进程创建，macOS 26/27 的 `MenuBarAgent` 仅渲染 `.app` 主可执行文件创建的 `NSStatusItem`，导致用户看不到右上角状态栏图标；② 自绘画布缺少 macOS 原生无障碍树与动态语义色，且把长篇静态解释直接堆在设置行内导致横向拥挤。
-- 修复与证据：[`src/tray_bridge.rs`](src/tray_bridge.rs) 改用 `tray-icon` 在 `szu-securelink` 主线程同进程挂载 36×36 `@2x` 模板图标与 `NSMenu`；[`src/host_api.rs`](src/host_api.rs) 与 [`platforms/macos/src/SecureLinkNativeApp.mm`](platforms/macos/src/SecureLinkNativeApp.mm) 对齐 `msime` 架构，采用原生 AppKit 控件与 `SettingsInfoTipButton` `?` 气泡说明。
+- 修复与证据：[`src/tray_bridge.rs`](src/tray_bridge.rs) 改用 `tray-icon` 在 `szu-securelink` 主线程同进程挂载 36×36 `@2x` 模板图标与 `NSMenu`；[`src/host_api.rs`](src/host_api.rs) 与 [`platforms/macos/src/SecureLinkNativeApp.mm`](platforms/macos/src/SecureLinkNativeApp.mm) 采用分层宿主契约与原生 AppKit 控件，并将静态说明收进 `SettingsInfoTipButton` `?` 气泡。
 - 正确做法（Done right）：macOS 菜单栏状态项一律在主进程主线程挂载；静态配置行的 `inline_detail` 保持 `None`，通过单元测试 [`host_api_enforces_info_tip_separation_and_c_abi_roundtrip`](src/host_api.rs) 强制校验。
 - 验证点：运行 `./scripts/check` 与 `cua-driver get_window_state` 核对原生 `AXWindow` 及 `AXMenuBarItem`。
 - 复发记录：Seen 1x（2026-11-08）。

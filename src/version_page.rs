@@ -24,7 +24,7 @@ pub const APP_BUILD_NUMBER: &str = "4";
 /// Supported target architecture label shown on the Version & Updates page.
 pub const APP_ARCH_LABEL: &str = "macOS arm64 (Apple Silicon)";
 /// Short Apple Developer ID signing team label shown on the Version & Updates page.
-pub const SIGNING_IDENTITY_SHORT: &str = "Developer ID (LQAVR62TK2)";
+pub const SIGNING_IDENTITY_SHORT: &str = "Apple Developer ID";
 
 /// Active sub-tab inside the Settings view (`General` vs `Version & Updates`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

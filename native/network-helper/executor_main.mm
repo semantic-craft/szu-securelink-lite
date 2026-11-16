@@ -18,8 +18,8 @@
 
 namespace {
 
-// Unit-5 audit evidence: publish the session journal exactly once, in the
-// shape network_plan.py mirrors, so the finance gate can compare snapshots
+// Audit evidence: publish the session journal exactly once, in the
+// shape network_plan.py mirrors, so external checks can compare snapshots
 // against what was actually created and removed. 0644: root-owned but
 // user-readable; nothing secret (routes, resolver addresses, lease UUIDs).
 void write_journal(const char *path, const tunnel_transaction::TransactionResult &result) {
@@ -76,7 +76,7 @@ std::optional<std::string> arg_value(int argc, char **argv, const std::string &n
     return std::nullopt;
 }
 
-// Unit-5 static route policy: staged root-side JSON
+// Static route policy: staged root-side JSON
 // {"staticRoutes": ["a.b.c.d/p", ...]}. Bounded, canonical IPv4, fail-closed:
 // a malformed trusted file refuses to start the daemon.
 std::optional<std::vector<std::string>> static_routes_from_file(const std::string &path) {
@@ -104,7 +104,7 @@ std::optional<std::vector<std::string>> static_routes_from_file(const std::strin
         if (address.find("..") != std::string::npos || address.front() == '.' || address.back() == '.') {
             return std::nullopt;
         }
-        // Reserved range guard: RFC 2544 (198.18.0.0/15) and local LAN
+        // Reserved range guard: RFC 2544 (198.18.0.0/15) and common local LAN
         // (192.168.50.0/24) are structurally excluded from the
         // tunnel, belt and braces with the capture validator's reserved set.
         unsigned address_value = 0, octets = 1, number = 0;

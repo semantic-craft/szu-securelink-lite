@@ -3,7 +3,7 @@
 // The engine authenticates the helper, sends hello/prepare/commit, receives
 // exactly one FD, refuses any descriptor that is not a utun control socket,
 // and only then acknowledges. Offline tests run it against a fake helper over
-// a socketpair; a real utun fd can only pass the verification in 3e.
+// a socketpair; a real utun fd can only pass the verification in the live daemon.
 // Pure policy: no main(), no direct socket creation.
 #include <net/if_utun.h>
 #include <sys/kern_control.h>
@@ -103,8 +103,8 @@ EngineHandshakeResult engine_handshake(int fd, const EngineApproval &approval, E
         return result;
     }
     // receive_chunk is deliberately nonblocking; wait for readability under
-    // an audited silence ceiling instead of spinning or blocking. The unit-5
-    // plan legitimately applies 125+ static route spawns before the fd
+    // an audited silence ceiling instead of spinning or blocking. Static policy
+    // plans legitimately apply 125+ static route spawns before the fd
     // arrives, so the ceiling covers a large audited apply, not just silence.
     const uint64_t silence_deadline = hooks.net.now_ms() + 30000;
     bool readable = false;
@@ -188,7 +188,7 @@ struct EnginePump {
         running = false;
         if (worker.joinable()) worker.join();
     }
-    // In-session push delta (unit 4): serialized with the pump so frames
+    // In-session push delta: serialized with the pump so frames
     // never interleave mid-write. Sequence authority stays with the pump.
     template <class Net>
     bool send_update(Net &net, const std::string &payload) {

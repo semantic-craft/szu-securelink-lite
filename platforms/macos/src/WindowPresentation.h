@@ -3,7 +3,7 @@
 #import <Cocoa/Cocoa.h>
 
 // Applies the macOS Dock icon visibility policy (`Regular` vs `Accessory`) from Rust's `ShellPresence`.
-static inline void MSIMEApplyActivationPolicy(BOOL showsDock) {
+static inline void SLApplyActivationPolicy(BOOL showsDock) {
     NSApplicationActivationPolicy target = showsDock
         ? NSApplicationActivationPolicyRegular
         : NSApplicationActivationPolicyAccessory;
@@ -12,8 +12,8 @@ static inline void MSIMEApplyActivationPolicy(BOOL showsDock) {
     }
 }
 
-// Brings a utility or main window to the foreground on macOS, matching `msime`'s `WindowPresentation.h`.
-static inline void MSIMEPresentWindow(NSWindow *window) {
+// Brings a utility or main window to the foreground on macOS.
+static inline void SLPresentWindow(NSWindow *window) {
     if (!window) {
         return;
     }

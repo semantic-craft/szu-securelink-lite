@@ -20,9 +20,6 @@ case "$app" in
         fi
         ;;
 esac
-if [ -f out/initial-analysis/vendor-public-key.der ]; then
-    cp out/initial-analysis/vendor-public-key.der "$app/Contents/Resources/vendor-public-key.der"
-fi
 icon_src=""
 if [ -f assets/app-icon.png ]; then
     icon_src="assets/app-icon.png"
@@ -100,11 +97,9 @@ info = {
     'CFBundlePackageType':'APPL',
     'CFBundleVersion':'4',
     'CFBundleShortVersionString':'0.2.3',
-    'NSHumanReadableCopyright':'张贤伟 · 深圳大学法律人工智能实训实验室',
+    'NSHumanReadableCopyright':'深圳大学法律人工智能实训实验室',
     'LSMinimumSystemVersion':'13.0',
     'NSHighResolutionCapable':True,
-    'SUFeedURL':'https://securelink.szu.edu.cn/updates/appcast.xml',
-    'SUPublicEDKey':'MCowBQYDK2VwAyEAszuSecureLinkEd25519PubKey01=',
     'SUEnableAutomaticChecks':True,
 }
 if not sys.argv[2].endswith('CAS-diagnostic.app'):

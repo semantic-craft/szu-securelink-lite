@@ -10,7 +10,7 @@ namespace securelink::ctrl {
 struct PushRouteIntent { std::string address; unsigned prefix = 32; int metric = 0; };
 }  // namespace securelink::ctrl
 
-// Narrow unit-4 contract for in-session route pushes. The only accepted
+// Narrow contract for in-session route pushes. The only accepted
 // PUSH_UPDATE body is a CSV of `route,<network>,<netmask>` directives with
 // dotted-quad IPv4, a contiguous mask and canonical network bits; anything
 // else (gateways, options, compressed framing, extra directives) fails the
@@ -111,7 +111,7 @@ public:
         : reject(std::move(onReject)), pushUpdate(std::move(onPushUpdate)) {}
     bool normalize_control(std::string &message) override {
         if (rejected) return false;
-        // Unit 4: a standard route push is consumed here and applied through
+        // A standard route push is consumed here and applied through
         // the audited transaction chain; without a handler this still fails
         // closed exactly as before.
         if (message.compare(0, 12, "PUSH_UPDATE,") == 0) {

@@ -1,6 +1,6 @@
 //! Versioned JSON host contract between the pure-Rust core and native platform UI (`#![forbid(unsafe_code)]`).
 //!
-//! Mirrors `metasequoiaime/msime`'s `crates/host-api` boundary:
+//! Host bridge contract:
 //! - Requests are bounded UTF-8 JSON objects (`{"op":"..."}`) up to [`MAX_HOST_REQUEST_BYTES`].
 //! - Responses use a uniform envelope: `{"ok":true,"value":...}` or `{"ok":false,"error":"..."}`.
 //! - Static explanatory descriptions live in `info_tip` (rendered behind a `?` popover button in AppKit),

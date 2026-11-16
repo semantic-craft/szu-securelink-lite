@@ -196,10 +196,10 @@ fn test_ctrl_policy_and_effects_classifier() {
     assert_eq!(effects.initial_routes().len(), 2);
 
     let allowed_pkt: [u8; 20] = [
-        0x45, 0, 0, 20, 0, 0, 0, 0, 64, 6, 0, 0, 1, 1, 105, 34, 192, 168, 240, 166,
+        0x45, 0, 0, 20, 0, 0, 0, 0, 64, 6, 0, 0, 1, 1, 96, 100, 192, 168, 240, 166,
     ];
     let blocked_pkt: [u8; 20] = [
-        0x45, 0, 0, 20, 0, 0, 0, 0, 64, 6, 0, 0, 1, 1, 105, 34, 8, 8, 8, 8,
+        0x45, 0, 0, 20, 0, 0, 0, 0, 64, 6, 0, 0, 1, 1, 96, 100, 8, 8, 8, 8,
     ];
     assert_eq!(effects.classify(&allowed_pkt), PacketDecision::DestinationAllowed);
     assert_eq!(effects.classify(&blocked_pkt), PacketDecision::NotCovered);
@@ -237,7 +237,7 @@ fn test_ip_math_and_shortcuts_and_gpui_workbench() {
     }
 
     let mut vm = WorkbenchViewModel::new();
-    vm.set_connected("utun4", "1.1.105.34");
+    vm.set_connected("utun4", "1.1.96.100");
     assert!(matches!(vm.status, ConnectionStatus::Connected { .. }));
     assert!(vm.toggle_favorite("szu-westlaw"));
     assert!(vm.add_custom_shortcut("教务部", "", "https://jwb.szu.edu.cn/"));
@@ -270,7 +270,7 @@ fn test_beginner_auto_connect_tray_pins_and_sparkle() {
     assert_eq!(vm.pending_open_shortcut_id.as_deref(), Some("szu-reimburse-system"));
     assert!(vm.last_opened_url.is_none());
 
-    vm.set_connected("utun4", "1.1.105.34");
+    vm.set_connected("utun4", "1.1.96.100");
     assert_eq!(vm.menu_bar_icon_geometry(), MenuBarIconGeometry::ConnectedSolid);
     assert!(vm.pending_open_shortcut_id.is_none());
     assert_eq!(
@@ -334,10 +334,10 @@ fn test_beginner_auto_connect_tray_pins_and_sparkle() {
     };
     assert_eq!(bad.validate(), Err(SparkleError::InvalidVersion));
     assert_eq!(
-        parse_engine_active_line("engine: active on utun7 vip=1.1.105.34"),
+        parse_engine_active_line("engine: active on utun7 vip=1.1.96.100"),
         Some(EngineActiveNotice {
             interface: "utun7".to_string(),
-            virtual_ipv4: "1.1.105.34".to_string(),
+            virtual_ipv4: "1.1.96.100".to_string(),
             dns_server: "192.168.247.6".to_string(),
         })
     );
@@ -349,7 +349,7 @@ fn test_beginner_auto_connect_tray_pins_and_sparkle() {
     win.on_shortcut_clicked("szu-reimburse-system");
     let notice = EngineActiveNotice {
         interface: "utun4".to_string(),
-        virtual_ipv4: "1.1.105.34".to_string(),
+        virtual_ipv4: "1.1.96.100".to_string(),
         dns_server: "192.168.247.6".to_string(),
     };
     win.apply_session_event(crate::tunnel_actor::SessionEvent::ConnectingPhase {
@@ -375,7 +375,7 @@ fn test_beginner_auto_connect_tray_pins_and_sparkle() {
     let mut actor_state = crate::tunnel_actor::ActorTunnelState::Connecting { watchdog_spawned: true };
     assert!(crate::tunnel_actor::step_watchdog_tick(&mut actor_state, crate::tunnel_actor::GenerationId(2), crate::tunnel_actor::GenerationId(2), None).is_none());
     assert_eq!(actor_state, crate::tunnel_actor::ActorTunnelState::Connecting { watchdog_spawned: true });
-    let sample_ifconfig = "utun4: flags=8051<UP,POINTOPOINT,RUNNING>\n\tinet 1.1.105.34 --> 1.1.96.1 netmask 0xff000000\n";
+    let sample_ifconfig = "utun4: flags=8051<UP,POINTOPOINT,RUNNING>\n\tinet 1.1.96.100 --> 1.1.96.1 netmask 0xff000000\n";
     let probed = crate::tunnel_actor::parse_ifconfig_campus_utun(sample_ifconfig);
     assert!(matches!(
         crate::tunnel_actor::step_watchdog_tick(&mut actor_state, crate::tunnel_actor::GenerationId(2), crate::tunnel_actor::GenerationId(2), probed),

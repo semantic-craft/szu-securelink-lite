@@ -280,7 +280,7 @@ inline std::vector<Operation> push_operations(
     return result;
 }
 
-// Vendor local static policy (unit 5): the stable school-internal route set
+// Vendor local static policy: the stable school-internal route set
 // the official client holds in its own configuration (observed evidence:
 // native/network-helper/vendor-static-routes.json). Split tunnel by design —
 // the default route stays with the system gateway; only school-internal
@@ -369,7 +369,7 @@ public:
         }
     }
 
-    // Unit-4 in-session push deltas: extend the audited journal with more
+    // In-session push deltas: extend the audited journal with more
     // route ops instead of opening a second journal. Whole-interface
     // ownership, the drift model and reverse-order cleanup are preserved;
     // created receipts for appended indices follow through record().

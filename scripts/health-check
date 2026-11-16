@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Health check for the szu-securelink privileged components (unit 5).
+"""Health check for the szu-securelink privileged components.
 
 Mirrors the official client's process-anomaly repair prompt: verify every
 privileged component against its audited receipts and report stale or

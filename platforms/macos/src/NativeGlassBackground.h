@@ -3,9 +3,8 @@
 #import <Cocoa/Cocoa.h>
 #include <objc/message.h>
 
-// Wraps `content` in `NSGlassEffectView` on macOS 26+ when Reduce Transparency is off,
-// matching `metasequoiaime/msime`'s `NativeGlassBackground.h`.
-static inline NSView *MSIMEUpdateNativeGlassBackground(NSView *content, CGFloat radius) {
+// Wraps `content` in `NSGlassEffectView` on macOS 26+ when Reduce Transparency is off.
+static inline NSView *SLUpdateNativeGlassBackground(NSView *content, CGFloat radius) {
     Class glassClass = NSClassFromString(@"NSGlassEffectView");
     BOOL canUseGlass = (glassClass != Nil) &&
                        ![[NSWorkspace sharedWorkspace] accessibilityDisplayShouldReduceTransparency];

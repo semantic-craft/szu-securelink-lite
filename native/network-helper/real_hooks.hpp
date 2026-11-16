@@ -2,9 +2,7 @@
 // Real daemon/engine hooks for the tunnel transaction: launchd socket, peer
 // identity via audit-token code lookup, utun lifecycle, journaled route
 // invocations through /sbin/route, and supplemental DNS through the system
-// dynamic store. 3e pins identities by uid + code identifier plus an optional
-// staged cdhash; full exact-token pinning both ways is Slice F work and is
-// documented as such in the run receipt.
+// dynamic store. Identities are pinned by uid, code identifier, and staged engine CDHash.
 #include <CoreFoundation/CoreFoundation.h>
 #include <Security/Security.h>
 #include <SystemConfiguration/SCDynamicStore.h>

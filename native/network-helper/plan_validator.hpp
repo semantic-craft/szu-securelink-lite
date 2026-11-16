@@ -19,7 +19,7 @@ struct Context {
     long long duration_seconds = 0;
     long long remote_port = 0;
     std::vector<std::string> verified_dns_suffixes;
-    // Vendor local static policy (unit 5): canonical IPv4 CIDRs, staged
+    // Vendor local static policy: canonical IPv4 CIDRs, staged
     // root-side like the rest of the trusted bootstrap. Canonical IPv4 only,
     // bounded by the reader; the default route never appears here.
     std::vector<std::string> static_routes;
@@ -141,7 +141,7 @@ inline Validation validate_capture(const plan_input::Value &capture, const Conte
         return &value->items;
     };
     if (!valid_uuid(context.session_id)) issue("invalid-session", "context.sessionID");
-    // Audited transaction lifetime: the unit-4 observation window needs up to
+    // Audited transaction lifetime: the observation window needs up to
     // 15 minutes; official sessions run longer, so this is our own bound.
     if (context.duration_seconds < 1 || context.duration_seconds > 900) {
         issue("invalid-duration", "context.durationSeconds");
@@ -382,7 +382,7 @@ inline Validation validate_capture(const plan_input::Value &capture, const Conte
             const std::vector<std::string> reserved =
                 is_v4 ? std::vector<std::string>{"0.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16",
                                                  "224.0.0.0/4", "240.0.0.0/4",
-                                                 // RFC 2544 range and local LAN.
+                                                 // RFC 2544 range and common local LAN 192.168.50.0/24.
                                                  "198.18.0.0/15", "192.168.50.0/24"}
                       : std::vector<std::string>{"::/128", "::1/128", "fe80::/10", "ff00::/8"};
             for (const std::string &text : reserved) {

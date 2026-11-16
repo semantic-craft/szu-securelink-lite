@@ -129,7 +129,7 @@ public struct BackendNetworkConfiguration: Sendable, CustomStringConvertible, Cu
         guard receipt.directivePresence.values.allSatisfy({ !$0 }) else { throw BackendHandshakePreparationError.unsupportedDirective }
         guard network.portHideEnable == 0 else { throw BackendHandshakePreparationError.unsupportedPortHiding }
         guard network.ipv6DnsResolve == nil || network.ipv6DnsResolve == 0 else { throw BackendHandshakePreparationError.unsupportedIPv6DNS }
-        // UpdateFlowRedirect returns at mode 0 before reading caCert (0x1005bbbc0 -> 0x1005bbf00).
+        // UpdateFlowRedirect returns at mode 0 before reading caCert.
         // The inactive flow CA is neither tunnel trust material nor a certificate to install.
         guard network.clientFlowRedirect == nil || network.clientFlowRedirect?.clientModeSwitch == 0 else {
             throw BackendHandshakePreparationError.unsupportedFlowRedirection
@@ -500,7 +500,7 @@ public actor BackendNetworkConfigurationAttempt: CustomStringConvertible, Custom
         try await performCollectingResources().configuration
     }
 
-    /// Unit 5: the same authenticated round trip, additionally collecting the
+    /// Performs the authenticated round trip and additionally collects the
     /// workbench quick-access resources (getApplications with the vpn token).
     /// Resource collection is fail-soft: a failure records the reason and
     /// never blocks the configuration itself.
@@ -571,7 +571,7 @@ public actor BackendNetworkConfigurationAttempt: CustomStringConvertible, Custom
     }
 }
 
-/// Unit 5 workbench resource collection outcome for the session report.
+/// Workbench resource collection outcome for the session report.
 /// Names and URLs only; no session tokens or credentials.
 public struct WorkbenchResourceCollection: Sendable, CustomStringConvertible {
     public var resources: [BackendUrlResource] = []

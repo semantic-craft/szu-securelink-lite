@@ -2,7 +2,7 @@
 name = "szu-host-macos"
 version = "0.2.3"
 edition = "2024"
-description = "Versioned C ABI and native AppKit host bridge for SZU SecureLink (msime host-api architecture)."
+description = "Versioned C ABI and native AppKit host bridge for SZU SecureLink."
 
 [lib]
 name = "szu_host_macos"

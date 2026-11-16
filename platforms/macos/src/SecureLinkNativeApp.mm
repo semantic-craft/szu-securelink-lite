@@ -54,7 +54,7 @@
 
     NSViewController *vc = [[NSViewController alloc] init];
     NSView *container = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 280, 64)];
-    NSTextField *titleField = MSIMEMakeLabel(self.tipTitle, 12.0, NSFontWeightSemibold, [NSColor labelColor]);
+    NSTextField *titleField = SLMakeLabel(self.tipTitle, 12.0, NSFontWeightSemibold, [NSColor labelColor]);
     NSTextField *bodyField = [NSTextField wrappingLabelWithString:self.tipBody ?: @""];
     bodyField.translatesAutoresizingMaskIntoConstraints = NO;
     bodyField.font = [NSFont systemFontOfSize:11.5 weight:NSFontWeightRegular];
@@ -87,7 +87,7 @@
 @implementation WorkbenchRootView
 - (BOOL)wantsUpdateLayer { return YES; }
 - (void)updateLayer {
-    self.layer.backgroundColor = [MSIMESettingsSurfaceColor() CGColor];
+    self.layer.backgroundColor = [SLSettingsSurfaceColor() CGColor];
 }
 @end
 
@@ -136,11 +136,11 @@
     self.snapshot = initialSnap;
 
     BOOL showsDock = initialSnap[@"shows_dock"] ? [initialSnap[@"shows_dock"] boolValue] : YES;
-    MSIMEApplyActivationPolicy(showsDock);
+    SLApplyActivationPolicy(showsDock);
     [self setupMainMenu];
     [self setupWindow];
     [self applySnapshot:initialSnap];
-    MSIMEPresentWindow(self.window);
+    SLPresentWindow(self.window);
 
     self.pollTimer = [NSTimer scheduledTimerWithTimeInterval:0.06
                                                       target:self
@@ -169,7 +169,7 @@
         [self applySnapshot:env[@"value"]];
     }
     if ([env[@"show_window"] boolValue]) {
-        MSIMEPresentWindow(self.window);
+        SLPresentWindow(self.window);
     }
 }
 
@@ -186,7 +186,7 @@
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)flag {
     (void)sender;
     (void)flag;
-    MSIMEPresentWindow(self.window);
+    SLPresentWindow(self.window);
     return YES;
 }
 
@@ -246,13 +246,13 @@
 - (void)setupWindow {
     NSUInteger style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                        NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
-    NSRect rect = NSMakeRect(0, 0, msime::mac::layout::kWindowWidth, msime::mac::layout::kWindowHeight);
+    NSRect rect = NSMakeRect(0, 0, szu::mac::layout::kWindowWidth, szu::mac::layout::kWindowHeight);
     self.window = [[NSWindow alloc] initWithContentRect:rect
                                               styleMask:style
                                                 backing:NSBackingStoreBuffered
                                                   defer:NO];
     self.window.title = @"荔连 · SZU SecureLink";
-    self.window.minSize = NSMakeSize(msime::mac::layout::kWindowMinWidth, msime::mac::layout::kWindowMinHeight);
+    self.window.minSize = NSMakeSize(szu::mac::layout::kWindowMinWidth, szu::mac::layout::kWindowMinHeight);
     self.window.delegate = self;
     self.window.releasedWhenClosed = NO;
 
@@ -271,7 +271,7 @@
     [self.rootView addSubview:self.bodyContainer];
     [self.rootView addSubview:self.footerContainer];
 
-    CGFloat margin = msime::mac::layout::kPageMargin;
+    CGFloat margin = szu::mac::layout::kPageMargin;
     [NSLayoutConstraint activateConstraints:@[
         [self.headerContainer.topAnchor constraintEqualToAnchor:self.rootView.topAnchor constant:12.0],
         [self.headerContainer.leadingAnchor constraintEqualToAnchor:self.rootView.leadingAnchor constant:margin],
@@ -289,7 +289,7 @@
         [self.footerContainer.heightAnchor constraintEqualToConstant:26.0],
     ]];
 
-    MSIMEApplySavedWindowFrameOrCenter(self.window);
+    SLApplySavedWindowFrameOrCenter(self.window);
 }
 
 - (NSDictionary *)settingRowForKey:(NSString *)key {
@@ -314,12 +314,12 @@
 - (void)applySnapshot:(NSDictionary *)snap {
     self.snapshot = snap;
     BOOL showsDock = snap[@"shows_dock"] ? [snap[@"shows_dock"] boolValue] : YES;
-    MSIMEApplyActivationPolicy(showsDock);
+    SLApplyActivationPolicy(showsDock);
 
     BOOL en = [snap[@"locale"] isEqualToString:@"en-US"];
     self.window.title = en ? @"SZU SecureLink · 荔连" : @"荔连 · SZU SecureLink";
     uint32_t accentHex = snap[@"accent_hex"] ? [snap[@"accent_hex"] unsignedIntValue] : 0x8c2232;
-    NSColor *accentColor = MSIMEAccentColor(accentHex);
+    NSColor *accentColor = SLAccentColor(accentHex);
 
     [self rebuildHeader:snap en:en accentColor:accentColor];
     if ([snap[@"route"] isEqualToString:@"settings"]) {
@@ -341,10 +341,10 @@
     NSImage *appImg = iconURL ? [[NSImage alloc] initWithContentsOfURL:iconURL] : [NSApp applicationIconImage];
     iconView.image = appImg;
 
-    NSTextField *titleLabel = MSIMEMakeLabel(
+    NSTextField *titleLabel = SLMakeLabel(
         en ? @"SZU SecureLink · 荔连" : @"荔连 · SZU SecureLink",
         15.0, NSFontWeightBold, accentColor);
-    NSTextField *subLabel = MSIMEMakeLabel(
+    NSTextField *subLabel = SLMakeLabel(
         en ? @"Shenzhen University Zero-Trust Campus Access" : @"深圳大学校园网与常用服务工作台",
         11.5, NSFontWeightRegular, [NSColor secondaryLabelColor]);
 
@@ -354,7 +354,7 @@
     } else if ([kind isEqualToString:@"connecting"]) {
         badgeColor = [NSColor systemOrangeColor];
     }
-    NSTextField *badgeLabel = MSIMEMakeLabel(
+    NSTextField *badgeLabel = SLMakeLabel(
         [NSString stringWithFormat:@"● %@", st[@"badge"] ?: @""],
         11.5, NSFontWeightSemibold, badgeColor);
 
@@ -402,11 +402,11 @@
     NSView *leftRail = [[NSView alloc] initWithFrame:NSZeroRect];
     leftRail.translatesAutoresizingMaskIntoConstraints = NO;
 
-    // 1. Hero Tunnel Card (`MSIMECardFillColor` + `NSGlassEffectView` on macOS 26+)
-    NSBox *heroBox = MSIMEMakeCardBox();
+    // 1. Hero Tunnel Card (`SLCardFillColor` + `NSGlassEffectView` on macOS 26+)
+    NSBox *heroBox = SLMakeCardBox();
     NSView *heroContent = heroBox.contentView;
 
-    NSTextField *statusTitle = MSIMEMakeLabel(st[@"title"] ?: @"", 13.5, NSFontWeightBold, [NSColor labelColor]);
+    NSTextField *statusTitle = SLMakeLabel(st[@"title"] ?: @"", 13.5, NSFontWeightBold, [NSColor labelColor]);
     SettingsInfoTipButton *statusTip = [SettingsInfoTipButton buttonWithTitle:(st[@"title"] ?: @"校园网隧道")
                                                                          body:(st[@"info_tip"] ?: @"")];
     BOOL showDetails = [snap[@"show_network_details"] boolValue];
@@ -420,7 +420,7 @@
     }
     NSTextField *inlineDetail = [NSTextField wrappingLabelWithString:detailText];
     inlineDetail.translatesAutoresizingMaskIntoConstraints = NO;
-    inlineDetail.font = [NSFont systemFontOfSize:msime::mac::layout::kDetailFontSize weight:NSFontWeightRegular];
+    inlineDetail.font = [NSFont systemFontOfSize:szu::mac::layout::kDetailFontSize weight:NSFontWeightRegular];
     inlineDetail.textColor = [NSColor secondaryLabelColor];
     inlineDetail.preferredMaxLayoutWidth = 220.0;
 
@@ -480,11 +480,11 @@
         [repairBtn.trailingAnchor constraintEqualToAnchor:heroContent.trailingAnchor],
     ]];
 
-    // 2. Menu Bar Quick Access Card (`MSIMECardFillColor` `NSBox`)
-    NSBox *pinsBox = MSIMEMakeCardBox();
+    // 2. Menu Bar Quick Access Card (`SLCardFillColor` `NSBox`)
+    NSBox *pinsBox = SLMakeCardBox();
     NSView *pinsContent = pinsBox.contentView;
     NSString *pinsTitleText = en ? @"Menu Bar Quick Access (4/4)" : @"菜单栏快捷直达（4 / 4 槽位）";
-    NSTextField *pinsTitle = MSIMEMakeLabel(pinsTitleText, msime::mac::layout::kSectionFontSize, NSFontWeightSemibold, [NSColor labelColor]);
+    NSTextField *pinsTitle = SLMakeLabel(pinsTitleText, szu::mac::layout::kSectionFontSize, NSFontWeightSemibold, [NSColor labelColor]);
     SettingsInfoTipButton *pinsTip = [SettingsInfoTipButton buttonWithTitle:pinsTitleText
                                                                        body:(snap[@"pins_info_tip"] ?: @"")];
     [pinsContent addSubview:pinsTitle];
@@ -520,24 +520,24 @@
     [leftRail addSubview:heroBox];
     [leftRail addSubview:pinsBox];
     [NSLayoutConstraint activateConstraints:@[
-        [leftRail.widthAnchor constraintEqualToConstant:msime::mac::layout::kLeftRailWidth],
+        [leftRail.widthAnchor constraintEqualToConstant:szu::mac::layout::kLeftRailWidth],
         [heroBox.topAnchor constraintEqualToAnchor:leftRail.topAnchor],
         [heroBox.leadingAnchor constraintEqualToAnchor:leftRail.leadingAnchor],
         [heroBox.trailingAnchor constraintEqualToAnchor:leftRail.trailingAnchor],
 
-        [pinsBox.topAnchor constraintEqualToAnchor:heroBox.bottomAnchor constant:msime::mac::layout::kCardSpacing],
+        [pinsBox.topAnchor constraintEqualToAnchor:heroBox.bottomAnchor constant:szu::mac::layout::kCardSpacing],
         [pinsBox.leadingAnchor constraintEqualToAnchor:leftRail.leadingAnchor],
         [pinsBox.trailingAnchor constraintEqualToAnchor:leftRail.trailingAnchor],
         [pinsBox.bottomAnchor constraintEqualToAnchor:leftRail.bottomAnchor],
     ]];
 
     // Right Pane: Search Header + Scrollable Categories
-    NSBox *rightBox = MSIMEMakeCardBox();
+    NSBox *rightBox = SLMakeCardBox();
     NSView *rightContent = rightBox.contentView;
 
-    NSTextField *dirTitle = MSIMEMakeLabel(
+    NSTextField *dirTitle = SLMakeLabel(
         en ? @"Campus Services Directory" : @"校内常用服务与学术数据库",
-        msime::mac::layout::kSectionFontSize, NSFontWeightSemibold, [NSColor labelColor]);
+        szu::mac::layout::kSectionFontSize, NSFontWeightSemibold, [NSColor labelColor]);
 
     NSSearchField *searchField = [[NSSearchField alloc] initWithFrame:NSZeroRect];
     searchField.translatesAutoresizingMaskIntoConstraints = NO;
@@ -615,8 +615,8 @@
                 NSView *rowView = [[NSView alloc] initWithFrame:NSZeroRect];
                 rowView.translatesAutoresizingMaskIntoConstraints = NO;
 
-                NSTextField *nameLbl = MSIMEMakeLabel(item[@"name"] ?: @"", msime::mac::layout::kBodyFontSize, NSFontWeightMedium, [NSColor labelColor]);
-                NSTextField *subLbl = MSIMEMakeLabel(item[@"subtitle"] ?: @"", msime::mac::layout::kDetailFontSize, NSFontWeightRegular, [NSColor secondaryLabelColor]);
+                NSTextField *nameLbl = SLMakeLabel(item[@"name"] ?: @"", szu::mac::layout::kBodyFontSize, NSFontWeightMedium, [NSColor labelColor]);
+                NSTextField *subLbl = SLMakeLabel(item[@"subtitle"] ?: @"", szu::mac::layout::kDetailFontSize, NSFontWeightRegular, [NSColor secondaryLabelColor]);
 
                 BOOL isPinned = [item[@"is_pinned"] boolValue];
                 NSButton *pinToggle = [NSButton buttonWithTitle:(isPinned ? (en ? @"Pinned" : @"已固定") : (en ? @"Pin" : @"固定"))
@@ -641,7 +641,7 @@
                 [rowView addSubview:openBtn];
 
                 [NSLayoutConstraint activateConstraints:@[
-                    [rowView.heightAnchor constraintEqualToConstant:msime::mac::layout::kRowHeight],
+                    [rowView.heightAnchor constraintEqualToConstant:szu::mac::layout::kRowHeight],
                     [nameLbl.leadingAnchor constraintEqualToAnchor:rowView.leadingAnchor constant:8.0],
                     [nameLbl.centerYAnchor constraintEqualToAnchor:rowView.centerYAnchor],
                     [subLbl.leadingAnchor constraintEqualToAnchor:nameLbl.trailingAnchor constant:8.0],
@@ -685,13 +685,13 @@
         [leftRail.bottomAnchor constraintEqualToAnchor:self.bodyContainer.bottomAnchor],
 
         [rightBox.topAnchor constraintEqualToAnchor:self.bodyContainer.topAnchor],
-        [rightBox.leadingAnchor constraintEqualToAnchor:leftRail.trailingAnchor constant:msime::mac::layout::kCardSpacing],
+        [rightBox.leadingAnchor constraintEqualToAnchor:leftRail.trailingAnchor constant:szu::mac::layout::kCardSpacing],
         [rightBox.trailingAnchor constraintEqualToAnchor:self.bodyContainer.trailingAnchor],
         [rightBox.bottomAnchor constraintEqualToAnchor:self.bodyContainer.bottomAnchor],
     ]];
 }
 
-// Builds a standard 30pt/38pt native AppKit settings row following `msime`'s `SettingsLayout.h`:
+// Builds a standard 30pt/38pt native AppKit settings row (`SettingsLayout.h`):
 // - Leading: title label + `?` `SettingsInfoTipButton` (static description inside popover)
 // - Optional inline detail under title ONLY when `inline_detail` is non-null (live status/values)
 // - Trailing: native AppKit control (`NSSwitch`, `NSPopUpButton`, or `NSButton`)
@@ -705,7 +705,7 @@
     NSView *row = [[NSView alloc] initWithFrame:NSZeroRect];
     row.translatesAutoresizingMaskIntoConstraints = NO;
 
-    NSTextField *titleLbl = MSIMEMakeLabel(title, msime::mac::layout::kBodyFontSize, NSFontWeightMedium, [NSColor labelColor]);
+    NSTextField *titleLbl = SLMakeLabel(title, szu::mac::layout::kBodyFontSize, NSFontWeightMedium, [NSColor labelColor]);
     SettingsInfoTipButton *infoBtn = [SettingsInfoTipButton buttonWithTitle:title body:tip];
     control.translatesAutoresizingMaskIntoConstraints = NO;
 
@@ -713,7 +713,7 @@
     [row addSubview:infoBtn];
     [row addSubview:control];
 
-    CGFloat rowHeight = inlineDetail ? msime::mac::layout::kDetailRowHeight : msime::mac::layout::kRowHeight;
+    CGFloat rowHeight = inlineDetail ? szu::mac::layout::kDetailRowHeight : szu::mac::layout::kRowHeight;
     [NSLayoutConstraint activateConstraints:@[
         [row.heightAnchor constraintEqualToConstant:rowHeight],
         [control.trailingAnchor constraintEqualToAnchor:row.trailingAnchor],
@@ -721,7 +721,7 @@
     ]];
 
     if (inlineDetail) {
-        NSTextField *detailLbl = MSIMEMakeLabel(inlineDetail, msime::mac::layout::kDetailFontSize, NSFontWeightRegular, [NSColor secondaryLabelColor]);
+        NSTextField *detailLbl = SLMakeLabel(inlineDetail, szu::mac::layout::kDetailFontSize, NSFontWeightRegular, [NSColor secondaryLabelColor]);
         [row addSubview:detailLbl];
         [NSLayoutConstraint activateConstraints:@[
             [titleLbl.topAnchor constraintEqualToAnchor:row.topAnchor constant:2.0],
@@ -769,7 +769,7 @@
     NSView *rAutoUpd = [self makeSettingsRowWithKey:@"auto_check_updates" control:autoUpdSwitch];
 
     if (isVersionTab) {
-        NSView *versionView = MSIMEBuildVersionPageView(
+        NSView *versionView = SLBuildVersionPageView(
             snap, en, accentColor, rAutoUpd, self,
             @selector(onCheckUpdatesClicked:),
             @selector(onDownloadUpdateClicked:),
@@ -785,7 +785,7 @@
     }
 
     // Card 1: System Presence & Startup (`NSPopUpButton` + `NSSwitch`)
-    NSBox *presenceCard = MSIMEMakeCardBox();
+    NSBox *presenceCard = SLMakeCardBox();
     NSView *pContent = presenceCard.contentView;
 
     NSPopUpButton *presencePopup = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
@@ -867,7 +867,7 @@
     ]];
 
     // Card 3: Updates & Zero-Trust Helper (inline live status + `NSSwitch` + `NSButton`)
-    NSBox *opsCard = MSIMEMakeCardBox();
+    NSBox *opsCard = SLMakeCardBox();
     NSView *oContent = opsCard.contentView;
 
     NSButton *openVerBtn = [NSButton buttonWithTitle:(en ? @"Version & Updates…" : @"版本与更新…")
@@ -910,7 +910,7 @@
         [presenceCard.leadingAnchor constraintEqualToAnchor:self.bodyContainer.leadingAnchor],
         [presenceCard.trailingAnchor constraintEqualToAnchor:self.bodyContainer.trailingAnchor],
 
-        [opsCard.topAnchor constraintEqualToAnchor:presenceCard.bottomAnchor constant:msime::mac::layout::kCardSpacing],
+        [opsCard.topAnchor constraintEqualToAnchor:presenceCard.bottomAnchor constant:szu::mac::layout::kCardSpacing],
         [opsCard.leadingAnchor constraintEqualToAnchor:self.bodyContainer.leadingAnchor],
         [opsCard.trailingAnchor constraintEqualToAnchor:self.bodyContainer.trailingAnchor],
         [opsCard.bottomAnchor constraintLessThanOrEqualToAnchor:self.bodyContainer.bottomAnchor],
@@ -937,7 +937,7 @@
     verBtn.font = [NSFont monospacedDigitSystemFontOfSize:11.5 weight:NSFontWeightRegular];
     verBtn.contentTintColor = [NSColor secondaryLabelColor];
 
-    NSTextField *attrLbl = MSIMEMakeLabel(
+    NSTextField *attrLbl = SLMakeLabel(
         snap[@"attribution"] ?: @"深圳大学法律人工智能实训实验室",
         11.5, NSFontWeightRegular, [NSColor secondaryLabelColor]);
 
@@ -1034,22 +1034,22 @@
 - (void)onMenuShowWindow:(id)sender {
     (void)sender;
     [self dispatchOp:@{@"op": @"set_route", @"route": @"workbench"}];
-    MSIMEPresentWindow(self.window);
+    SLPresentWindow(self.window);
 }
 - (void)onMenuOpenSettings:(id)sender {
     (void)sender;
     [self dispatchOp:@{@"op": @"set_route", @"route": @"settings"}];
-    MSIMEPresentWindow(self.window);
+    SLPresentWindow(self.window);
 }
 - (void)onMenuOpenAbout:(id)sender {
     (void)sender;
     [self dispatchOp:@{@"op": @"set_settings_tab", @"tab": @"version"}];
-    MSIMEPresentWindow(self.window);
+    SLPresentWindow(self.window);
 }
 - (void)onMenuCheckUpdates:(id)sender {
     (void)sender;
     [self dispatchOp:@{@"op": @"check_for_updates", @"open_version_tab": @YES}];
-    MSIMEPresentWindow(self.window);
+    SLPresentWindow(self.window);
 }
 - (void)onMenuQuit:(id)sender {
     (void)sender;

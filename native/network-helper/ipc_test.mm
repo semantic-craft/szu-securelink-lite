@@ -75,7 +75,7 @@ int main() {
     Flow maxed(binding(), 0, 900000, valid); assert(maxed.tick(1) == Decision::accepted);  // new audited lifetime cap
     Flow rollback(binding(), 100, 10000, valid); assert(rollback.tick(99) == Decision::cleanup);
     Flow heartbeat(binding(), 0, 10000, valid); assert(heartbeat.tick(6000) == Decision::cleanup);
-    // Audited apply work refreshes the silence clock (unit 5 large plans).
+    // Audited apply work refreshes the silence clock (large static plans).
     Flow worker(binding(), 100, 10000, valid);
     assert(worker.receive(request(Op::hello, 1), 100) == Decision::accepted);
     assert(worker.receive(request(Op::prepare, 2), 101) == Decision::prepare_validated);

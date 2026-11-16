@@ -1,7 +1,7 @@
 import Foundation
 import SecureLinkCore
 
-/// Workbench quick-access resources (unit 5: the official client's 内部网/OA
+/// Workbench quick-access resources (the official client's 内部网/OA
 /// cards). REA spec: POST /networkApi/gcable/getApplications (vpn token)
 /// returns {returnCode, content:{needTwoFactor, groupingSwitch,
 /// applicationList:[{id, name, nameZh, nameEn, indexUrl, type, logo, ...}]}}

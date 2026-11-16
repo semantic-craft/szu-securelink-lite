@@ -1,10 +1,10 @@
 #pragma once
 // Daemon-side tunnel transaction driver. Composes the audited IPC primitives
-// (network_helper::Flow / verify_peer / FD marker) with the 3a validator and
-// the 3b executor model: only a plan whose bytes hash to the bootstrap-approved
+// (network_helper::Flow / verify_peer / FD marker) with the validator and
+// the executor model: only a plan whose bytes hash to the bootstrap-approved
 // digest AND pass the strict validator reaches the executor, and every applied
 // operation is owned by the journal until cleanup. Offline tests drive this
-// through fakes; the real daemon (3e) supplies sockets and the System utun.
+// through fakes; the real daemon supplies sockets and the System utun.
 // Pure policy: no main(), no socket creation, no direct OS calls.
 #include <map>
 #include <sys/types.h>
@@ -56,7 +56,7 @@ struct TransactionResult {
     bool fd_sent = false;
     bool fd_ack_received = false;
     bool engine_authenticated = false;
-    // Audit evidence (unit 5): the lease and the exact created records let the
+    // Audit evidence: the lease and the exact created records let the
     // daemon publish a journal file whose shape mirrors network_plan.py.
     plan_ops::InterfaceLease lease;
     bool lease_valid = false;

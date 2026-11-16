@@ -34,7 +34,7 @@ public:
     Decision committed(bool success, uint64_t now_ms);
     Decision tick(uint64_t now_ms);
     Decision disconnected();
-    // Unit 5: audited apply work counts as traffic. A large plan applies for
+    // Audited apply work counts as traffic. A large plan applies for
     // several seconds synchronously; the caller refreshes the silence clock
     // so the daemon does not judge its own work as peer silence.
     void keepalive(uint64_t now_ms) { heartbeat_ms_ = now_ms; }

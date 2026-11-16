@@ -249,8 +249,8 @@ final class OpenVPNDataSessionTests: XCTestCase {
 
     func testParseActiveLineExtractsInterfaceAndVirtualIPv4() {
         XCTAssertEqual(
-            OpenVPNDataSession.parseActiveLine("engine: active on utun9 vip=1.1.105.34"),
-            OpenVPNDataSession.ActiveState(interface: "utun9", virtualIPv4: "1.1.105.34")
+            OpenVPNDataSession.parseActiveLine("engine: active on utun9 vip=1.1.96.100"),
+            OpenVPNDataSession.ActiveState(interface: "utun9", virtualIPv4: "1.1.96.100")
         )
         XCTAssertEqual(
             OpenVPNDataSession.parseActiveLine("engine: active on utun12"),

@@ -4,9 +4,8 @@ import Security
 
 /// Versioned public protocol material, recovered offline from the pinned
 /// distribution. No vendor artifact or user configuration is read at runtime.
-/// Source VA: RSA blob 0x100e2d790; IV blob 0x100e2d750; certID
-/// 0x100e2cb90; locale 0x100e2cbb0. The final empty envelope was computed
-/// offline; neither its symmetric key nor the blob-unwrapping key is included.
+/// The final empty envelope was computed offline; neither its symmetric key
+/// nor the blob-unwrapping key is included.
 /// Fingerprint is SHA256 of the five ordered fields, each prefixed by BE32 length.
 /// Password support is deliberately limited to the fixed empty CAS envelope.
 public struct BackendPublicMaterial: Sendable {

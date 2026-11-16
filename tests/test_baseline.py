@@ -10,7 +10,7 @@ class BaselineTests(unittest.TestCase):
         sample = '''PID RSS COMM
 1 1024 /fixture/SecureLink.app/Contents/MacOS/SecureLink
 2 2048 /fixture/SecureLink.app/Contents/Frameworks/SecureLink Helper (GPU).app/Contents/MacOS/Helper
-3 512 /fixture/SecureLink.app/Contents/Resources/app.asar.unpacked/assets/app-ext/securelink_mac/bin/SecureLink_Client
+3 512 /fixture/SecureLink.app/Contents/Resources/assets/app-ext/securelink_mac/bin/SecureLink_Client
 4 999999 /fixture/SecureLink.app.evil/fake
 5 999999 /unrelated/app'''
         result = baseline.summarize(sample, '/fixture/SecureLink.app')

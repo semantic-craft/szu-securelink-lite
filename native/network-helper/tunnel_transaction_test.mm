@@ -37,7 +37,7 @@ constexpr char kPlanJson[] =
     " \"domains\": [\"campus.example\", \"finance.campus.example\"]}]},"
     " \"allowIPv4\": true, \"allowIPv6\": null, \"allowLocalDNS\": true, \"sessionNameDiscarded\": true}";
 
-// Same fixture shape with a different pushed prefix: the unit-4 delta plan.
+// Same fixture shape with a different pushed prefix: the delta plan.
 constexpr char kDeltaPlanJson[] =
     "{\"version\": 2, \"ctrlOptionsCaptured\": true, \"ctrlOptionCount\": 0, \"ctrlDuplicateKeys\": 0,"
     " \"ctrlDuplicateDomains\": 0, \"ctrlMappings\": [], \"domainOptionsCaptured\": true,"
@@ -311,7 +311,7 @@ int main() {
         check(result.fd_sent && result.fd_ack_received, "learned binding hands over the fd");
     }
 
-    // Unit 5: staged static policy routes ride the same journal; one covered
+    // Staged static policy routes ride the same journal; one covered
     // by the plan is skipped, one new range is applied and rolled back first.
     {
         auto net = FakeNet{};
@@ -368,7 +368,7 @@ int main() {
         check(result.applied.size() == result.removed.size(), "eof rolls back everything");
     }
 
-    // Unit 4: in-session update applies pushed routes on top of the base.
+    // In-session update applies pushed routes on top of the base.
     {
         auto net = FakeNet{};
         auto exec = FakeExecutor{};

@@ -233,7 +233,7 @@ public:
         if (!layer || !remote || addresses.empty() || !domainCaptured || !ctrlCaptured) reject("incomplete-plan");
         sealed = true; complete = !failure; return -1;
     }
-    // Unit-4 delta capture: this plan's base fields (layer, remote, addresses,
+    // Delta capture: this plan's base fields (layer, remote, addresses,
     // mtu and the policy captures) with routes replaced by an in-session push.
     // The returned capture is sealed; isComplete() false means the base was
     // never complete or a pushed route was rejected, and the caller must not

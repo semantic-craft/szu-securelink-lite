@@ -4,7 +4,7 @@
 #![forbid(unsafe_code)]
 
 use std::env;
-use std::process::{Command, exit};
+use std::process::exit;
 use szu_securelink_rs::agent_control::{
     CliInvocation, ControlCommand, default_control_socket_path, execute_cli_command,
     parse_cli_args, send_socket_request, spawn_control_daemon,
@@ -12,31 +12,8 @@ use szu_securelink_rs::agent_control::{
 use szu_securelink_rs::gpui_window::run_desktop_app;
 use szu_securelink_rs::tunnel_actor::{TunnelActor, TunnelConfig};
 
-fn is_diagnostic_flag(arg: &str) -> bool {
-    matches!(
-        arg,
-        "--cas-connect-test"
-            | "--cas-preauthentication-test"
-            | "--backend-preauthentication-test"
-            | "--backend-configuration-test"
-            | "--legacy-ipc-mode"
-            | "--finance"
-            | "--session-report"
-    )
-}
-
 fn main() {
     let args: Vec<String> = env::args().collect();
-    if args.iter().skip(1).any(|a| is_diagnostic_flag(a)) {
-        let cfg = TunnelConfig::from_bundle_env();
-        if let Some(diag) = cfg.diagnostic_bin {
-            let status = Command::new(diag)
-                .args(&args[1..])
-                .status()
-                .unwrap_or_else(|_| exit(1));
-            exit(status.code().unwrap_or(1));
-        }
-    }
 
     match parse_cli_args(&args[1..]) {
         Ok(CliInvocation::Gui) => {

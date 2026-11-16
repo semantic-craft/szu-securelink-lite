@@ -3,7 +3,7 @@
 // are deliberately NOT utun sockets; the engine must refuse them. Data-session
 // scenarios inject a utun name so the handshake reaches the active phase and
 // the pump/disconnect sequencing is exercised end to end. Real utun
-// acceptance is 3e under administrator authorization.
+// acceptance runs separately under administrator authorization.
 #import <Foundation/Foundation.h>
 #import <CommonCrypto/CommonDigest.h>
 #import <net/if.h>
@@ -218,7 +218,7 @@ void run_data_scenario(bool helper_dies) {
     std::this_thread::sleep_for(std::chrono::milliseconds(helper_dies ? 300 : 350));
     bool update_sent = false;
     if (!helper_dies) {
-        // Unit 4: the in-session delta rides the same socket, serialized with
+        // In-session delta rides the same socket, serialized with
         // the heartbeat pump, with the sequence continuing.
         update_sent = pump.send_update(hooks.net, "{\"version\": 2}");
     }

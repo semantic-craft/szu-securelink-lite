@@ -107,7 +107,7 @@ bool parse_dig_a_records(const std::string &output, std::vector<std::string> *ad
 }
 
 // Returns true if ip is in a reserved range (loopback, link-local, multicast,
-// RFC 2544 198.18.0.0/15, local LAN 192.168.50.0/24) or already covered
+// RFC 2544 198.18.0.0/15, common local LAN 192.168.50.0/24) or already covered
 // by the staged campus aggregate subnets (172.31.0.0/16, 192.168.240.0/20,
 // 210.39.0.0/16, 10.10.27.0/24, 1.1.96.1/32).
 bool is_covered_or_reserved_ipv4(const std::string &ip) {
@@ -541,7 +541,7 @@ int probeTransaction(int argc, char **argv) {
         interface_name = result.tunnel_interface;
         std::fprintf(stderr, "engine: transaction returned phase=%s\n", result.phase.c_str());
     } else {
-        // Unit-4 machinery probe: hold with the pump, submit one update delta
+        // Delta probe: hold with the pump, submit one update delta
         // mid-hold, then disconnect so the daemon converges cleanup.
         const auto update_bytes = real_hooks::read_file_string(*update_path);
         if (!update_bytes.has_value() || update_delay < 1 || update_delay >= hold_seconds) {
@@ -651,7 +651,7 @@ int selfTest() {
         !is_covered_or_reserved_ipv4("210.39.3.155") ||
         !is_covered_or_reserved_ipv4("192.168.247.6") ||
         is_covered_or_reserved_ipv4("172.22.10.5")) return 3;
-    // Unit-4 push parsing: narrow route directives only, everything else
+    // In-session push parsing: narrow route directives only, everything else
     // fails closed.
     std::vector<securelink::ctrl::PushRouteIntent> pushed;
     // Directives are comma separated, arguments inside a directive are space
