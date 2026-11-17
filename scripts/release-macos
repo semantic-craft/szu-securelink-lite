@@ -1,0 +1,268 @@
+#!/bin/sh
+# Canonical macOS release signing verification, notarization, stapling, spctl check,
+# ZIP + SHA256SUMS.txt packaging, LaunchServices cleanup, and optional /Applications install.
+set -eu
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+cd "$ROOT"
+
+LSREGISTER="${SZU_LSREGISTER:-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister}"
+INSTALL_DIR="${SZU_INSTALL_DIR:-/Applications}"
+
+app_arg=""
+out_dir=""
+install_after=false
+open_after=false
+
+usage() {
+    echo "usage: scripts/release-macos [--app <path>] [--out-dir <dir>] [--install [--open]]" >&2
+    exit "${1:-64}"
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --app)
+            [ $# -ge 2 ] || usage 64
+            app_arg="$2"
+            shift 2
+            ;;
+        --out-dir)
+            [ $# -ge 2 ] || usage 64
+            out_dir="$2"
+            shift 2
+            ;;
+        --install)
+            install_after=true
+            shift
+            ;;
+        --open)
+            open_after=true
+            shift
+            ;;
+        -h|--help)
+            usage 0
+            ;;
+        *)
+            usage 64
+            ;;
+    esac
+done
+
+if $open_after && ! $install_after; then
+    usage 64
+fi
+
+plist_value() {
+    /usr/libexec/PlistBuddy -c "Print :$1" "$2"
+}
+
+unregister_ls_bundle() {
+    target=$1
+    [ -n "$target" ] || return 0
+    case "$target" in
+        /Applications/*) return 0 ;;
+    esac
+    if [ -x "$LSREGISTER" ]; then
+        "$LSREGISTER" -u "$target" >/dev/null 2>&1 || true
+    fi
+}
+
+resolve_notary_profile() {
+    if [ -n "${NOTARY_PROFILE:-}" ]; then
+        printf '%s\n' "$NOTARY_PROFILE"
+        return 0
+    fi
+    if command -v macos-notary-profile >/dev/null 2>&1; then
+        macos-notary-profile
+        return $?
+    fi
+    if [ -n "${HOME:-}" ] && [ -x "$HOME/.local/bin/macos-notary-profile" ]; then
+        "$HOME/.local/bin/macos-notary-profile"
+        return $?
+    fi
+    return 1
+}
+
+verify_codesign_item() {
+    item=$1
+    expected_id=$2
+    cs_info=$(codesign -dvvv "$item" 2>&1) || {
+        printf '%s\n' "$cs_info" >&2
+        echo "release-macos: unsigned or invalid code signature: $item" >&2
+        exit 1
+    }
+    if printf '%s\n' "$cs_info" | grep -qE '^Signature=adhoc\b|^CodeDirectory\b.*\bflags=.*\(adhoc\)'; then
+        echo "release-macos: ad-hoc signature is not notarizable (Developer ID Application required): $item" >&2
+        exit 1
+    fi
+    if ! printf '%s\n' "$cs_info" | grep -qE '^Authority=Developer ID Application:'; then
+        echo "release-macos: missing Developer ID Application authority: $item" >&2
+        exit 1
+    fi
+    if ! printf '%s\n' "$cs_info" | grep -qE '^CodeDirectory\b.*\bflags=.*\([^)]*runtime[^)]*\)'; then
+        echo "release-macos: missing hardened runtime flag (--options runtime): $item" >&2
+        exit 1
+    fi
+    if ! printf '%s\n' "$cs_info" | grep -qE '^Timestamp=' || printf '%s\n' "$cs_info" | grep -qE '^Timestamp=none$'; then
+        echo "release-macos: missing secure timestamp (--timestamp): $item" >&2
+        exit 1
+    fi
+    if [ -n "$expected_id" ]; then
+        actual_id=$(printf '%s\n' "$cs_info" | sed -n 's/^Identifier=//p' | head -n 1)
+        if [ "$actual_id" != "$expected_id" ]; then
+            echo "release-macos: signed identifier '$actual_id' does not match CFBundleIdentifier '$expected_id'" >&2
+            exit 1
+        fi
+    fi
+}
+
+preflight_app_bundle() {
+    bundle=$1
+    [ -d "$bundle" ] || { echo "release-macos: app bundle not found: $bundle" >&2; exit 1; }
+    plist="$bundle/Contents/Info.plist"
+    [ -f "$plist" ] || { echo "release-macos: missing Info.plist in $bundle" >&2; exit 1; }
+
+    bundle_exec=$(plist_value CFBundleExecutable "$plist")
+    bundle_id=$(plist_value CFBundleIdentifier "$plist")
+    bundle_name=$(plist_value CFBundleName "$plist")
+    bundle_version=$(plist_value CFBundleShortVersionString "$plist")
+
+    [ -x "$bundle/Contents/MacOS/$bundle_exec" ] || {
+        echo "release-macos: missing executable $bundle/Contents/MacOS/$bundle_exec" >&2
+        exit 1
+    }
+
+    codesign --verify --deep --strict "$bundle"
+    verify_codesign_item "$bundle" "$bundle_id"
+
+    for bin in "$bundle/Contents/MacOS"/*; do
+        [ -f "$bin" ] && [ -x "$bin" ] || continue
+        verify_codesign_item "$bin" ""
+    done
+}
+
+submit_dir=""
+install_stage=""
+app=""
+cleanup() {
+    if [ -n "$submit_dir" ] && [ -d "$submit_dir" ]; then
+        rm -rf "$submit_dir"
+    fi
+    if [ -n "$install_stage" ] && [ -e "$install_stage" ]; then
+        rm -rf "$install_stage"
+    fi
+    unregister_ls_bundle "${app:-}"
+}
+trap cleanup EXIT
+
+if [ -n "$app_arg" ]; then
+    [ -d "$app_arg" ] || { echo "release-macos: app bundle not found: $app_arg" >&2; exit 1; }
+    app=$(cd "$app_arg" && pwd)
+    if [ -z "$out_dir" ]; then
+        case "$app" in
+            /Applications/*) out_dir="$ROOT/out/release" ;;
+            *) out_dir=$(dirname "$app") ;;
+        esac
+    fi
+    mkdir -p "$out_dir"
+    out_dir=$(cd "$out_dir" && pwd)
+    preflight_app_bundle "$app"
+    notary_profile=$(resolve_notary_profile || true)
+    [ -n "$notary_profile" ] || {
+        echo "release-macos: unable to resolve notary profile; set NOTARY_PROFILE or install macos-notary-profile" >&2
+        exit 1
+    }
+else
+    sign_id="${CODESIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | sed -nE 's/.*"(Developer ID Application: [^"]+)".*/\1/p' | head -n 1)}"
+    [ -n "$sign_id" ] || {
+        echo "release-macos: no Developer ID Application signing identity found (set CODESIGN_IDENTITY)" >&2
+        exit 1
+    }
+    notary_profile=$(resolve_notary_profile || true)
+    [ -n "$notary_profile" ] || {
+        echo "release-macos: unable to resolve notary profile; set NOTARY_PROFILE or install macos-notary-profile" >&2
+        exit 1
+    }
+    out_dir="${out_dir:-$ROOT/out/release}"
+    mkdir -p "$out_dir"
+    out_dir=$(cd "$out_dir" && pwd)
+    app="$out_dir/荔连.app"
+    unregister_ls_bundle "$app"
+    CODESIGN_IDENTITY="$sign_id" "$ROOT/scripts/build-app" "$app"
+    app=$(cd "$app" && pwd)
+    preflight_app_bundle "$app"
+fi
+
+notary_bin=""
+if command -v macos-notary >/dev/null 2>&1; then
+    notary_bin=$(command -v macos-notary)
+elif [ -n "${HOME:-}" ] && [ -x "$HOME/.local/bin/macos-notary" ]; then
+    notary_bin="$HOME/.local/bin/macos-notary"
+fi
+
+if [ -n "$notary_bin" ]; then
+    "$notary_bin" submit "$app" --profile "$notary_profile"
+else
+    submit_dir=$(mktemp -d "${TMPDIR:-/tmp}/szu-notarization.XXXXXX")
+    submit_zip="$submit_dir/submit.zip"
+    ditto -c -k --sequesterRsrc --keepParent "$app" "$submit_zip"
+    submit_out=$(xcrun notarytool submit "$submit_zip" --keychain-profile "$notary_profile" --wait 2>&1) || {
+        printf '%s\n' "$submit_out" >&2
+        echo "release-macos: notarytool submit failed" >&2
+        exit 1
+    }
+    [ -z "$submit_out" ] || printf '%s\n' "$submit_out"
+    if printf '%s\n' "$submit_out" | grep -qiE 'status:[[:space:]]*(Invalid|Rejected)\b'; then
+        echo "release-macos: notarization rejected by Apple Notary Service" >&2
+        exit 1
+    fi
+    rm -rf "$submit_dir"
+    submit_dir=""
+    xcrun stapler staple "$app"
+    xcrun stapler validate "$app"
+fi
+
+spctl_out=$(spctl --assess --type execute --verbose=4 "$app" 2>&1) || {
+    printf '%s\n' "$spctl_out" >&2
+    echo "release-macos: Gatekeeper spctl assessment failed" >&2
+    exit 1
+}
+printf '%s\n' "$spctl_out" | grep -q "Notarized Developer ID" || {
+    printf '%s\n' "$spctl_out" >&2
+    echo "release-macos: spctl did not report Notarized Developer ID" >&2
+    exit 1
+}
+
+arch=$(uname -m)
+zip_name="SZU-SecureLink-v${bundle_version}-macOS-${arch}.zip"
+zip_path="$out_dir/$zip_name"
+rm -f "$zip_path" "$out_dir/SHA256SUMS.txt"
+ditto -c -k --sequesterRsrc --keepParent "$app" "$zip_path"
+(
+    cd "$out_dir"
+    shasum -a 256 "$zip_name" > SHA256SUMS.txt
+    shasum -a 256 -c SHA256SUMS.txt >/dev/null
+)
+
+unregister_ls_bundle "$app"
+
+if $install_after; then
+    mkdir -p "$INSTALL_DIR"
+    install_dir_abs=$(cd "$INSTALL_DIR" && pwd)
+    dest_app="$install_dir_abs/${bundle_name}.app"
+    install_stage="$install_dir_abs/.${bundle_name}.app.staging.$$"
+    rm -rf "$install_stage"
+    ditto "$app" "$install_stage"
+    rm -rf "$dest_app"
+    mv "$install_stage" "$dest_app"
+    install_stage=""
+    if [ -x "$LSREGISTER" ]; then
+        "$LSREGISTER" -f "$dest_app" >/dev/null 2>&1 || true
+    fi
+    if $open_after; then
+        open "$dest_app"
+    fi
+    echo "release-macos: installed $dest_app"
+fi
+
+echo "release-macos: notarized $app -> $zip_path"
