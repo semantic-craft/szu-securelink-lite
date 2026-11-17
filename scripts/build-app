@@ -1,10 +1,46 @@
 #!/bin/sh
 set -eu
-cd "$(dirname "$0")/.."
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+cd "$ROOT"
+
+notarize=false
+app="out/SZU SecureLink.app"
+app_set=false
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --notarize)
+            notarize=true
+            shift
+            ;;
+        -h|--help)
+            echo "usage: scripts/build-app [--notarize] [app-path]" >&2
+            exit 0
+            ;;
+        -*)
+            echo "usage: scripts/build-app [--notarize] [app-path]" >&2
+            exit 64
+            ;;
+        *)
+            if $app_set; then
+                echo "usage: scripts/build-app [--notarize] [app-path]" >&2
+                exit 64
+            fi
+            app="$1"
+            app_set=true
+            shift
+            ;;
+    esac
+done
+
+SIGN_ID="${CODESIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | sed -nE 's/.*"(Developer ID Application: [^"]+)".*/\1/p' | head -n 1)}"
+if $notarize && [ -z "$SIGN_ID" ]; then
+    echo "build-app: --notarize requires a Developer ID Application signing identity (or CODESIGN_IDENTITY)" >&2
+    exit 1
+fi
+
 swift build -c release
 cargo build --release --bin szu-securelink
 binary_dir=$(swift build -c release --show-bin-path)
-app="${1:-out/SZU SecureLink.app}"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/zh_CN.lproj" "$app/Contents/Resources/en.lproj"
 case "$app" in
     *CAS-diagnostic.app)
@@ -107,15 +143,18 @@ if not sys.argv[2].endswith('CAS-diagnostic.app'):
 with open(sys.argv[1], 'wb') as f:
     plistlib.dump(info, f)
 PYINFO
-SIGN_ID="${CODESIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | sed -nE 's/.*"(Developer ID Application: [^"]+)".*/\1/p' | head -n 1)}"
 if [ -n "$SIGN_ID" ]; then
     if [ -x "$app/Contents/MacOS/executor-engine" ]; then
         codesign --force --options runtime --timestamp --identifier local.szu.securelink.executor-engine --sign "$SIGN_ID" "$app/Contents/MacOS/executor-engine"
+    fi
+    if [ -x "$app/Contents/MacOS/szu-openvpn3-data-engine" ]; then
+        codesign --force --options runtime --timestamp --identifier local.szu.securelink.executor-engine --sign "$SIGN_ID" "$app/Contents/MacOS/szu-openvpn3-data-engine"
     fi
     if [ -x "$app/Contents/MacOS/szu-securelink-diagnostic" ]; then
         codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$app/Contents/MacOS/szu-securelink-diagnostic"
     fi
     codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$app"
+    codesign --verify --deep --strict "$app"
 else
     if [ -x "$app/Contents/MacOS/szu-securelink-diagnostic" ]; then
         codesign --force --sign - "$app/Contents/MacOS/szu-securelink-diagnostic" >/dev/null 2>&1 || true
@@ -123,3 +162,6 @@ else
     codesign --force --sign - "$app" >/dev/null 2>&1 || true
 fi
 printf '%s\n' "$app"
+if $notarize; then
+    exec "$ROOT/scripts/release-macos" --app "$app"
+fi
