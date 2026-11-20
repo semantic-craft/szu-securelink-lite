@@ -187,8 +187,12 @@ fn legacy_launch_agent_path() -> Option<PathBuf> {
 /// Removes a legacy `LaunchAgent` plist at `path` if present, returning `true` when removed.
 pub fn remove_legacy_launch_agent_at(path: &Path) -> bool { path.exists() && fs::remove_file(path).is_ok() }
 
-fn cleanup_legacy_launch_agent() -> bool {
-    let Some(path) = legacy_launch_agent_path().filter(|p| p.exists()) else { return false };
+/// Returns `false` when this process was launched by the legacy `LaunchAgent` so `bootout` cannot SIGTERM itself.
+#[must_use]
+pub fn should_bootout_legacy_agent(xpc_service_name: Option<&str>) -> bool { xpc_service_name.map(str::trim) != Some(LEGACY_LAUNCH_AGENT_LABEL) }
+
+fn bootout_legacy_launch_agent_if_safe() {
+    if !should_bootout_legacy_agent(env::var("XPC_SERVICE_NAME").ok().as_deref()) { return; }
     if let Ok(out) = Command::new("/usr/bin/id").arg("-u").output() && out.status.success() {
         let uid = String::from_utf8_lossy(&out.stdout).trim().to_string();
         if !uid.is_empty() {
@@ -197,11 +201,21 @@ fn cleanup_legacy_launch_agent() -> bool {
                 .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
         }
     }
-    remove_legacy_launch_agent_at(&path)
+}
+
+fn cleanup_legacy_launch_agent() -> bool {
+    let removed = legacy_launch_agent_path().is_some_and(|p| remove_legacy_launch_agent_at(&p));
+    if removed { bootout_legacy_launch_agent_if_safe(); }
+    removed
 }
 
 /// Migrates a legacy `LaunchAgent` plist to macOS Login Items (`SMAppService.mainApp`) if present.
-pub fn migrate_legacy_launch_agent_if_present() -> bool { cleanup_legacy_launch_agent() && szu_host_macos::set_launch_at_login(true) }
+pub fn migrate_legacy_launch_agent_if_present() -> bool {
+    let Some(path) = legacy_launch_agent_path().filter(|p| p.exists()) else { return false };
+    if !szu_host_macos::set_launch_at_login(true) { return false; }
+    if remove_legacy_launch_agent_at(&path) { bootout_legacy_launch_agent_if_safe(); }
+    true
+}
 
 /// Returns whether macOS Launch at Login (`SMAppService.mainApp`) is currently enabled.
 #[must_use]
@@ -213,15 +227,7 @@ pub fn set_launch_at_login(enabled: bool) -> bool { let _ = cleanup_legacy_launc
 /// User actions emitted by the top-right macOS Menu Bar dropdown.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TrayAction {
-    ShowWindow,
-    OpenSettings,
-    CheckUpdates,
-    ToggleConnect,
-    Repair,
-    OpenPin(String),
-    ToggleDock,
-    ToggleMenuBar,
-    Quit,
+    ShowWindow, OpenSettings, CheckUpdates, ToggleConnect, Repair, OpenPin(String), ToggleDock, ToggleMenuBar, Quit,
 }
 
 impl TrayAction {
@@ -378,14 +384,16 @@ mod tests {
     }
 
     #[test]
-    fn remove_legacy_launch_agent_at_is_idempotent() {
+    fn remove_legacy_launch_agent_at_and_bootout_guard() {
         let dir = env::temp_dir().join(format!("szu-legacy-la-{}", std::process::id()));
         let _ = fs::create_dir_all(&dir);
         let plist = dir.join(format!("{LEGACY_LAUNCH_AGENT_LABEL}.plist"));
         fs::write(&plist, "<plist/>").unwrap();
-        assert!(remove_legacy_launch_agent_at(&plist));
-        assert!(!plist.exists());
-        assert!(!remove_legacy_launch_agent_at(&plist));
+        assert!(remove_legacy_launch_agent_at(&plist) && !plist.exists() && !remove_legacy_launch_agent_at(&plist));
+        assert!(should_bootout_legacy_agent(None));
+        assert!(should_bootout_legacy_agent(Some("application.local.szu.securelink.preview.123")));
+        assert!(!should_bootout_legacy_agent(Some(LEGACY_LAUNCH_AGENT_LABEL)));
+        assert!(!should_bootout_legacy_agent(Some(" local.szu.securelink.login ")));
         let _ = fs::remove_dir_all(&dir);
     }
 }
