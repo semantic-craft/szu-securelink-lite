@@ -6,8 +6,9 @@
 use std::env;
 use std::process::exit;
 use szu_securelink_rs::agent_control::{
-    CliInvocation, ControlCommand, default_control_socket_path, execute_cli_command,
-    parse_cli_args, send_socket_request, spawn_control_daemon,
+    CliInvocation, ControlCommand, default_control_socket_path, default_gui_lock_path,
+    execute_cli_command, parse_cli_args, send_socket_request, spawn_control_daemon,
+    try_acquire_gui_instance_lock_at,
 };
 use szu_securelink_rs::gpui_window::run_desktop_app;
 use szu_securelink_rs::tunnel_actor::{TunnelActor, TunnelConfig};
@@ -17,6 +18,17 @@ fn main() {
 
     match parse_cli_args(&args[1..]) {
         Ok(CliInvocation::Gui) => {
+            let _gui_lock = match try_acquire_gui_instance_lock_at(&default_gui_lock_path()) {
+                Ok(Some(guard)) => Some(guard),
+                Ok(None) => {
+                    let _ = szu_host_macos::activate_existing_instance();
+                    return;
+                }
+                Err(_) => None,
+            };
+            if szu_host_macos::activate_existing_instance() {
+                return;
+            }
             let (handle, events) = TunnelActor::spawn(TunnelConfig::from_bundle_env());
             let events = spawn_control_daemon(handle.clone(), events);
             run_desktop_app(handle, events);

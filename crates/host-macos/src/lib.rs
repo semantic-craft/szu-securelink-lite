@@ -138,8 +138,22 @@ pub unsafe extern "C" fn securelink_client_string_free(ptr: *mut c_char) {
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn securelink_macos_run_native_app();
+    fn securelink_macos_activate_existing_instance() -> bool;
     fn securelink_macos_is_launch_at_login_enabled() -> bool;
     fn securelink_macos_set_launch_at_login(enabled: bool) -> bool;
+}
+
+/// Activates another running instance of the same macOS app bundle if present.
+#[must_use]
+pub fn activate_existing_instance() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe { securelink_macos_activate_existing_instance() }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
 }
 
 /// Returns whether the macOS 13+ Login Item (`SMAppService.mainApp`) is currently enabled.

@@ -1106,6 +1106,25 @@ extern "C" bool securelink_macos_set_launch_at_login(bool enabled) {
     }
 }
 
+extern "C" bool securelink_macos_activate_existing_instance(void) {
+    @autoreleasepool {
+        NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier];
+        if (bundleId.length == 0) {
+            return false;
+        }
+        pid_t selfPid = [[NSProcessInfo processInfo] processIdentifier];
+        NSArray<NSRunningApplication *> *apps =
+            [NSRunningApplication runningApplicationsWithBundleIdentifier:bundleId];
+        for (NSRunningApplication *app in apps) {
+            if (app.processIdentifier != selfPid && !app.terminated) {
+                [app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+                return true;
+            }
+        }
+        return false;
+    }
+}
+
 extern "C" void securelink_macos_run_native_app(void) {
     @autoreleasepool {
         NSApplication *app = [NSApplication sharedApplication];

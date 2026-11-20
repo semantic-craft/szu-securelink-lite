@@ -3,14 +3,15 @@
 use szu_securelink_rs::async_util;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use szu_securelink_rs::agent_control::{
     CliInvocation, ControlBroker, ControlCommand, ControlResponse, TunnelPhase, TunnelSnapshot,
     apply_event_to_snapshot, parse_cli_args, reconcile_utun_probe, send_socket_request,
-    spawn_control_daemon_at,
+    spawn_control_daemon_at, try_acquire_gui_instance_lock_at,
 };
 use szu_securelink_rs::tunnel_actor::{
     EngineActiveNotice, GenerationId, SessionCommand, SessionEvent, TunnelHandle,
@@ -258,5 +259,69 @@ fn unix_socket_roundtrip_and_permissions() {
     let roundtrip = ControlResponse::from_json_line(&resp.to_json()).unwrap();
     assert_eq!(roundtrip, resp);
 
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn gui_instance_lock_blocks_second_holder_until_drop() {
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let dir = std::env::temp_dir().join(format!("szu-sl-lock-{nanos}"));
+    let lock_path = dir.join("gui.lock");
+
+    let first = try_acquire_gui_instance_lock_at(&lock_path)
+        .expect("first lock acquisition should not error")
+        .expect("first holder should acquire exclusive GUI lock");
+    let mode = fs::metadata(&lock_path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+
+    let second = try_acquire_gui_instance_lock_at(&lock_path)
+        .expect("contended lock check should not error");
+    assert!(second.is_none(), "second holder must be blocked while first holds lock");
+
+    drop(first);
+
+    let third = try_acquire_gui_instance_lock_at(&lock_path)
+        .expect("post-drop lock acquisition should not error");
+    assert!(third.is_some(), "lock must be re-acquirable after first guard drops");
+    drop(third);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn gui_binary_exits_cleanly_when_instance_lock_is_held() {
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let dir = std::env::temp_dir().join(format!("szu-sl-bin-lock-{nanos}"));
+    let lock_path = dir.join("gui.lock");
+    let sock_path = dir.join("control.sock");
+
+    let guard = try_acquire_gui_instance_lock_at(&lock_path)
+        .expect("lock acquisition should succeed")
+        .expect("test should hold exclusive GUI lock");
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_szu-securelink"))
+        .env("SZU_SECURELINK_INSTANCE_LOCK", &lock_path)
+        .env("SZU_SECURELINK_CONTROL_SOCKET", &sock_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn szu-securelink GUI binary");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let status = loop {
+        if let Some(st) = child.try_wait().expect("poll child status") {
+            break st;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("second GUI process hung instead of exiting cleanly while lock was held");
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+
+    assert!(status.success(), "expected exit status 0, got {status}");
+    drop(guard);
     let _ = fs::remove_dir_all(&dir);
 }

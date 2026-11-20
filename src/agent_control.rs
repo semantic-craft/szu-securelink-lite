@@ -7,14 +7,15 @@ use crate::shortcuts::{default_shortcuts, valid_url};
 use crate::tunnel_actor::{probe_connecting_campus_utun, validate_securelink_callback_url, SessionCommand, SessionEvent, TunnelActor, TunnelConfig, TunnelHandle};
 use crate::async_util::{self, Receiver};
 use serde_json::{json, Value};
-use std::io::{BufRead, BufReader, Write};
+use std::fs::{self, File, OpenOptions, TryLockError};
+use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use std::{env, fs, thread};
+use std::{env, thread};
 
 pub type TunnelActorHandle = TunnelHandle;
 pub type ActorCommand = SessionCommand;
@@ -239,6 +240,32 @@ impl ControlBroker {
 #[must_use] pub fn default_control_socket_path() -> PathBuf {
     if let Some(p) = env::var_os("SZU_SECURELINK_CONTROL_SOCKET").filter(|v| !v.is_empty()) { return PathBuf::from(p); }
     env::var_os("HOME").map_or_else(|| env::temp_dir().join("szu-securelink-control.sock"), |h| PathBuf::from(h).join("Library/Application Support/szu-securelink/control.sock"))
+}
+
+#[derive(Debug)]
+pub struct GuiInstanceGuard(File);
+
+impl Drop for GuiInstanceGuard {
+    fn drop(&mut self) { let _ = self.0.unlock(); }
+}
+
+#[must_use] pub fn default_gui_lock_path() -> PathBuf {
+    if let Some(p) = env::var_os("SZU_SECURELINK_INSTANCE_LOCK").filter(|v| !v.is_empty()) { return PathBuf::from(p); }
+    default_control_socket_path().with_file_name("gui.lock")
+}
+
+pub fn try_acquire_gui_instance_lock_at(path: &Path) -> Result<Option<GuiInstanceGuard>, io::Error> {
+    if let Some(parent) = path.parent() && !parent.as_os_str().is_empty() {
+        fs::create_dir_all(parent)?;
+        let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+    }
+    let file = OpenOptions::new().read(true).write(true).create(true).truncate(false).open(path)?;
+    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+    match file.try_lock() {
+        Ok(()) => Ok(Some(GuiInstanceGuard(file))),
+        Err(TryLockError::WouldBlock) => Ok(None),
+        Err(TryLockError::Error(err)) => Err(err),
+    }
 }
 
 fn encode_command_line(cmd: &ControlCommand) -> String {
