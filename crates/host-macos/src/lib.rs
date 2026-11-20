@@ -138,6 +138,35 @@ pub unsafe extern "C" fn securelink_client_string_free(ptr: *mut c_char) {
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn securelink_macos_run_native_app();
+    fn securelink_macos_is_launch_at_login_enabled() -> bool;
+    fn securelink_macos_set_launch_at_login(enabled: bool) -> bool;
+}
+
+/// Returns whether the macOS 13+ Login Item (`SMAppService.mainApp`) is currently enabled.
+#[must_use]
+pub fn is_launch_at_login_enabled() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe { securelink_macos_is_launch_at_login_enabled() }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
+/// Enables or disables the macOS 13+ Login Item (`SMAppService.mainApp`).
+#[must_use]
+pub fn set_launch_at_login(enabled: bool) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe { securelink_macos_set_launch_at_login(enabled) }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = enabled;
+        false
+    }
 }
 
 /// Installs `callbacks` on the main thread and runs the native macOS AppKit `NSApplication` loop.

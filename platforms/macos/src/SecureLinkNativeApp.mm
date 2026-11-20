@@ -1,4 +1,5 @@
 #import <Cocoa/Cocoa.h>
+#import <ServiceManagement/ServiceManagement.h>
 #include "NativeGlassBackground.h"
 #include "SettingsLayout.h"
 #include "WindowPresentation.h"
@@ -1059,6 +1060,51 @@
 }
 
 @end
+
+static BOOL SLIsRunningInsideAppBundle(void) {
+    NSBundle *bundle = [NSBundle mainBundle];
+    return bundle.bundleIdentifier.length > 0 && [bundle.bundlePath hasSuffix:@".app"];
+}
+
+extern "C" bool securelink_macos_is_launch_at_login_enabled(void) {
+    @autoreleasepool {
+        if (!SLIsRunningInsideAppBundle()) {
+            return false;
+        }
+        if (@available(macOS 13.0, *)) {
+            return [SMAppService mainAppService].status == SMAppServiceStatusEnabled;
+        }
+        return false;
+    }
+}
+
+extern "C" bool securelink_macos_set_launch_at_login(bool enabled) {
+    @autoreleasepool {
+        if (!SLIsRunningInsideAppBundle()) {
+            return false;
+        }
+        if (@available(macOS 13.0, *)) {
+            SMAppService *service = [SMAppService mainAppService];
+            SMAppServiceStatus status = service.status;
+            if (enabled) {
+                if (status == SMAppServiceStatusEnabled) {
+                    return true;
+                }
+                NSError *error = nil;
+                return [service registerAndReturnError:&error] ||
+                       service.status == SMAppServiceStatusEnabled;
+            } else {
+                if (status == SMAppServiceStatusNotRegistered || status == SMAppServiceStatusNotFound) {
+                    return true;
+                }
+                NSError *error = nil;
+                return [service unregisterAndReturnError:&error] ||
+                       service.status == SMAppServiceStatusNotRegistered;
+            }
+        }
+        return false;
+    }
+}
 
 extern "C" void securelink_macos_run_native_app(void) {
     @autoreleasepool {

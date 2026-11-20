@@ -84,8 +84,8 @@ fn build_settings_rows(win: &WorkbenchWindow, en: bool) -> Value {
             if en { "Controls Dock and Menu Bar icon visibility. At least one entry point stays visible so closing the window never strands the background process." }
             else { "控制程序坞（Dock）与右上角菜单栏图标的显示方式；系统强制至少保留一处可见入口，关闭窗口后点击图标即可重新唤起工作台。" }),
         row("launch_at_login", if en { "Launch at macOS Login" } else { "开机自动启动荔连" }, None,
-            if en { "Installs or removes ~/Library/LaunchAgents/local.szu.securelink.login.plist for the current macOS user." }
-            else { "在当前用户目录写入或移除 ~/Library/LaunchAgents/local.szu.securelink.login.plist，登录 macOS 时自动在后台就绪。" }),
+            if en { "Registers or removes 荔连 in macOS Login Items (SMAppService) for the current user." }
+            else { "通过 macOS 系统「登录项」（SMAppService）注册或移除荔连，登录系统时自动在后台就绪。" }),
         row("locale", if en { "Interface Language" } else { "界面显示语言" }, None,
             if en { "Switches all native workbench, settings, and menu bar labels between Simplified Chinese and English immediately." }
             else { "立即切换主工作台、偏好设置与菜单栏托盘的中英文界面文案。" }),
@@ -304,6 +304,9 @@ mod tests {
             let key = row["key"].as_str().unwrap_or_default();
             let tip = row["info_tip"].as_str().unwrap_or_default();
             assert!(!tip.is_empty(), "every settings row must provide an info_tip for the ? popover");
+            if key == "launch_at_login" {
+                assert!(!tip.contains("LaunchAgents") && tip.contains("SMAppService"));
+            }
             match key {
                 "update_status" | "tunnel_helper" => {
                     assert!(row["inline_detail"].as_str().is_some_and(|s| !s.is_empty()));
@@ -317,6 +320,9 @@ mod tests {
         let r1: Value = serde_json::from_str(&dispatch_window_request(&mut win, br#"{"op":"set_locale","locale":"en-US"}"#)).unwrap();
         assert_eq!(r1["ok"], true);
         assert_eq!(r1["value"]["locale"], "en-US");
+        let en_tip = r1["value"]["settings_rows"].as_array().unwrap().iter()
+            .find(|r| r["key"] == "launch_at_login").unwrap()["info_tip"].as_str().unwrap();
+        assert!(!en_tip.contains("LaunchAgents") && en_tip.contains("SMAppService"));
 
         let r2: Value = serde_json::from_str(&dispatch_window_request(&mut win, br#"{"op":"set_shell_presence","mode":"menubar_only"}"#)).unwrap();
         assert_eq!(r2["ok"], true);

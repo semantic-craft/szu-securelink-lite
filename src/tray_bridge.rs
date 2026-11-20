@@ -1,4 +1,4 @@
-//! macOS Dock & Menu Bar presence domain model, login launch agent, and in-process `tray-icon` controller (`#![forbid(unsafe_code)]`).
+//! macOS Dock & Menu Bar presence domain model, Login Item (`SMAppService`), and in-process `tray-icon` controller (`#![forbid(unsafe_code)]`).
 //!
 //! Models system shell visibility with [`ShellPresence`] so the illegal `(false, false)` state
 //! (both Dock and Menu Bar icons hidden, leaving an unreachable background process) is
@@ -10,14 +10,14 @@ use crate::async_util::Sender;
 use crate::gpui_workbench::{ConnectionStatus, UiLocale, UiScheme, WorkbenchViewModel};
 use crate::tunnel_actor::SessionEvent;
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::rc::Rc;
 use std::{env, fs};
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
-const LAUNCH_AGENT_LABEL: &str = "local.szu.securelink.login";
-const DEFAULT_APP_EXEC: &str = "/Applications/荔连.app/Contents/MacOS/szu-securelink";
+const LEGACY_LAUNCH_AGENT_LABEL: &str = "local.szu.securelink.login";
 
 /// Validated macOS shell visibility states for `荔连.app` (at least one entry point is always visible).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -159,9 +159,10 @@ impl AppPreferences {
         )
     }
 
-    /// Loads persisted preferences from disk and reconciles `launch_at_login` with the LaunchAgent plist.
+    /// Loads persisted preferences from disk and reconciles `launch_at_login` with macOS Login Items (`SMAppService`).
     #[must_use]
     pub fn load_persisted() -> Self {
+        let _ = migrate_legacy_launch_agent_if_present();
         let (fallback, login_exists) = (ShellPresence::load_persisted(), is_launch_at_login_enabled());
         Self::prefs_path().and_then(|p| fs::read_to_string(p).ok()).map_or(
             Self { shell_presence: fallback, launch_at_login: login_exists, ..Self::default() },
@@ -173,57 +174,41 @@ impl AppPreferences {
     pub fn save_persisted(self) {
         self.shell_presence.save_persisted();
         if let Some(path) = Self::prefs_path() {
-            if let Some(parent) = path.parent() {
-                let _ = fs::create_dir_all(parent);
-            }
+            if let Some(parent) = path.parent() { let _ = fs::create_dir_all(parent); }
             let _ = fs::write(path, self.to_lines());
         }
     }
 }
 
-fn launch_agent_path() -> Option<PathBuf> {
-    Some(PathBuf::from(env::var_os("HOME")?).join(format!("Library/LaunchAgents/{LAUNCH_AGENT_LABEL}.plist")))
+fn legacy_launch_agent_path() -> Option<PathBuf> {
+    Some(PathBuf::from(env::var_os("HOME")?).join(format!("Library/LaunchAgents/{LEGACY_LAUNCH_AGENT_LABEL}.plist")))
 }
 
-/// Renders the macOS `LaunchAgent` plist XML for starting `荔连.app` at user login.
-#[must_use]
-pub fn launch_agent_plist_contents(exec_path: &str) -> String {
-    format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
-         <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
-         <plist version=\"1.0\">\n<dict>\n\
-             <key>Label</key>\n<string>{LAUNCH_AGENT_LABEL}</string>\n\
-             <key>ProgramArguments</key>\n<array>\n<string>{exec_path}</string>\n</array>\n\
-             <key>RunAtLoad</key>\n<true/>\n\
-             <key>ProcessType</key>\n<string>Interactive</string>\n\
-         </dict>\n</plist>\n"
-    )
-}
+/// Removes a legacy `LaunchAgent` plist at `path` if present, returning `true` when removed.
+pub fn remove_legacy_launch_agent_at(path: &Path) -> bool { path.exists() && fs::remove_file(path).is_ok() }
 
-/// Returns whether the user's `LaunchAgent` plist for `荔连.app` is currently installed.
-#[must_use]
-pub fn is_launch_at_login_enabled() -> bool {
-    launch_agent_path().is_some_and(|p| p.is_file())
-}
-
-/// Installs or removes `~/Library/LaunchAgents/local.szu.securelink.login.plist`.
-pub fn set_launch_at_login(enabled: bool) -> bool {
-    let Some(path) = launch_agent_path() else { return false };
-    if enabled {
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
+fn cleanup_legacy_launch_agent() -> bool {
+    let Some(path) = legacy_launch_agent_path().filter(|p| p.exists()) else { return false };
+    if let Ok(out) = Command::new("/usr/bin/id").arg("-u").output() && out.status.success() {
+        let uid = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !uid.is_empty() {
+            let target = format!("gui/{uid}/{LEGACY_LAUNCH_AGENT_LABEL}");
+            let _ = Command::new("/bin/launchctl").args(["bootout", &target])
+                .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
         }
-        let exec = if PathBuf::from(DEFAULT_APP_EXEC).is_file() {
-            DEFAULT_APP_EXEC.to_string()
-        } else {
-            env::current_exe().ok().and_then(|p| p.to_str().map(str::to_string)).unwrap_or_else(|| DEFAULT_APP_EXEC.to_string())
-        };
-        fs::write(&path, launch_agent_plist_contents(&exec)).is_ok()
-    } else {
-        let _ = fs::remove_file(&path);
-        !path.exists()
     }
+    remove_legacy_launch_agent_at(&path)
 }
+
+/// Migrates a legacy `LaunchAgent` plist to macOS Login Items (`SMAppService.mainApp`) if present.
+pub fn migrate_legacy_launch_agent_if_present() -> bool { cleanup_legacy_launch_agent() && szu_host_macos::set_launch_at_login(true) }
+
+/// Returns whether macOS Launch at Login (`SMAppService.mainApp`) is currently enabled.
+#[must_use]
+pub fn is_launch_at_login_enabled() -> bool { szu_host_macos::is_launch_at_login_enabled() }
+
+/// Enables or disables macOS Launch at Login via `SMAppService.mainApp` and removes any legacy `LaunchAgent`.
+pub fn set_launch_at_login(enabled: bool) -> bool { let _ = cleanup_legacy_launch_agent(); szu_host_macos::set_launch_at_login(enabled) }
 
 /// User actions emitted by the top-right macOS Menu Bar dropdown.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -386,10 +371,21 @@ mod tests {
         }
         let prefs = AppPreferences { shell_presence: ShellPresence::MenuBarOnly, launch_at_login: true, auto_check_updates: false, locale: UiLocale::EnUs, scheme: UiScheme::BambooColumn };
         assert_eq!(AppPreferences::parse_lines(&prefs.to_lines(), ShellPresence::DockAndMenuBar, true), prefs);
-        assert!(launch_agent_plist_contents(DEFAULT_APP_EXEC).contains(LAUNCH_AGENT_LABEL));
         for action in ["ACT:SHOW_WINDOW", "ACT:OPEN_SETTINGS", "ACT:CHECK_UPDATES", "ACT:TOGGLE_CONNECT", "ACT:REPAIR", "ACT:TOGGLE_DOCK", "ACT:TOGGLE_MENUBAR", "ACT:QUIT", "ACT:PIN:szu-ehall"] {
             assert!(TrayAction::parse_line(action).is_some());
         }
         assert!(TrayAction::parse_line("INVALID").is_none());
+    }
+
+    #[test]
+    fn remove_legacy_launch_agent_at_is_idempotent() {
+        let dir = env::temp_dir().join(format!("szu-legacy-la-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let plist = dir.join(format!("{LEGACY_LAUNCH_AGENT_LABEL}.plist"));
+        fs::write(&plist, "<plist/>").unwrap();
+        assert!(remove_legacy_launch_agent_at(&plist));
+        assert!(!plist.exists());
+        assert!(!remove_legacy_launch_agent_at(&plist));
+        let _ = fs::remove_dir_all(&dir);
     }
 }

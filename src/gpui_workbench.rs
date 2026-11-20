@@ -174,7 +174,7 @@ impl WorkbenchViewModel {
         self.save_preferences();
     }
 
-    /// Updates the Launch at Login setting and syncs `~/Library/LaunchAgents/local.szu.securelink.login.plist`.
+    /// Updates the Launch at Login setting via macOS Login Items (`SMAppService`).
     pub fn set_launch_at_login(&mut self, enabled: bool) {
         #[cfg(not(test))]
         let ok = set_launch_at_login(enabled);
